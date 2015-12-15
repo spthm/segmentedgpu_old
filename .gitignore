@@ -1,0 +1,9 @@
+*.o
+benchmarklaunchbox/benchmarklaunchbox
+benchmarkmerge/benchmarkmerge
+benchmarkscan/benchmarkscan
+benchmarksegreduce/benchmarksegreduce
+benchmarksegsort/benchmarksegsort
+benchmarksort/benchmarksort
+testlaunchbox/testlaunchbox
+

@@ -53,18 +53,4 @@ enum MgpuSearchType {
 	MgpuSearchTypeIndexMatch
 };
 
-enum MgpuJoinKind {
-	MgpuJoinKindInner,
-	MgpuJoinKindLeft,
-	MgpuJoinKindRight,
-	MgpuJoinKindOuter
-};
-
-enum MgpuSetOp {
-	MgpuSetOpIntersection,
-	MgpuSetOpUnion,
-	MgpuSetOpDiff,
-	MgpuSetOpSymDiff
-};
-
 } // namespace mgpu
