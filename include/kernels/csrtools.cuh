@@ -167,7 +167,7 @@ SGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesUpsweep(int nz, CsrIt csr_global,
 
 	union Shared {
 		int indices[NT * (VT + 1)];
-		typename CTAReduce<NT>::Storage reduceStorage;
+		typename CTAReduce<NT, int>::Storage reduceStorage;
 	};
 	__shared__ Shared shared;
 
@@ -191,7 +191,7 @@ SGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesUpsweep(int nz, CsrIt csr_global,
 	}
 	__syncthreads();
 
-	validRowCount = CTAReduce<NT>::Reduce(tid, validRowCount,
+	validRowCount = CTAReduce<NT, int>::Reduce(tid, validRowCount,
 		shared.reduceStorage);
 	if(!tid)
 		counts_global[block] = validRowCount;

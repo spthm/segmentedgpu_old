@@ -105,22 +105,64 @@ SGPU_DEVICE uint prmt_ptx(uint a, uint b, uint index) {
 ////////////////////////////////////////////////////////////////////////////////
 // shfl_up
 
-__device__ __forceinline__ float shfl_up(float var,
-	unsigned int delta, int width = 32) {
+__device__ __forceinline__ int shfl_up(int var, int offset,
+	int width = WARP_SIZE) {
 
 #if __CUDA_ARCH__ >= 300
-	var = __shfl_up(var, delta, width);
+	var = __shfl_up(var, offset, width);
 #endif
 	return var;
 }
 
-__device__ __forceinline__ double shfl_up(double var,
-	unsigned int delta, int width = 32) {
+__device__ __forceinline__ sgpu::int64 shfl_up(sgpu::int64 var, int offset,
+	int width = WARP_SIZE) {
+
+#if __CUDA_ARCH__ >= 300
+	int2 p = sgpu::longlong_as_int2(var);
+	p.x = __shfl_up(p.x, offset, width);
+	p.y = __shfl_up(p.y, offset, width);
+	var = sgpu::int2_as_longlong(p);
+#endif
+	return var;
+}
+
+__device__ __forceinline__ unsigned int shfl_up(unsigned int var, int offset,
+	int width = WARP_SIZE) {
+
+#if __CUDA_ARCH__ >= 300
+	var = __shfl_up(var, offset, width);
+#endif
+	return var;
+}
+
+__device__ __forceinline__ sgpu::uint64 shfl_up(sgpu::uint64 var, int offset,
+	int width = WARP_SIZE) {
+
+#if __CUDA_ARCH__ >= 300
+	uint2 p = sgpu::ulonglong_as_uint2(var);
+	p.x = __shfl_up(p.x, offset, width);
+	p.y = __shfl_up(p.y, offset, width);
+	var = sgpu::uint2_as_ulonglong(p);
+#endif
+	return var;
+}
+
+__device__ __forceinline__ float shfl_up(float var, int offset,
+	int width = WARP_SIZE) {
+
+#if __CUDA_ARCH__ >= 300
+	var = __shfl_up(var, offset, width);
+#endif
+	return var;
+}
+
+__device__ __forceinline__ double shfl_up(double var, int offset,
+	int width = WARP_SIZE) {
 
 #if __CUDA_ARCH__ >= 300
 	int2 p = sgpu::double_as_int2(var);
-	p.x = __shfl_up(p.x, delta, width);
-	p.y = __shfl_up(p.y, delta, width);
+	p.x = __shfl_up(p.x, offset, width);
+	p.y = __shfl_up(p.y, offset, width);
 	var = sgpu::int2_as_double(p);
 #endif
 
@@ -145,6 +187,9 @@ SGPU_DEVICE int shfl_add(int x, int offset, int width = WARP_SIZE) {
 	return result;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// shfl_max
+
 SGPU_DEVICE int shfl_max(int x, int offset, int width = WARP_SIZE) {
 	int result = 0;
 #if __CUDA_ARCH__ >= 300
@@ -154,6 +199,24 @@ SGPU_DEVICE int shfl_max(int x, int offset, int width = WARP_SIZE) {
 		".reg .pred p;"
 		"shfl.up.b32 r0|p, %1, %2, %3;"
 		"@p max.s32 r0, r0, %4;"
+		"mov.s32 %0, r0; }"
+		: "=r"(result) : "r"(x), "r"(offset), "r"(mask), "r"(x));
+#endif
+	return result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// shfl_min
+
+SGPU_DEVICE int shfl_min(int x, int offset, int width = WARP_SIZE) {
+	int result = 0;
+#if __CUDA_ARCH__ >= 300
+	int mask = (WARP_SIZE - width)<< 8;
+	asm(
+		"{.reg .s32 r0;"
+		".reg .pred p;"
+		"shfl.up.b32 r0|p, %1, %2, %3;"
+		"@p min.s32 r0, r0, %4;"
 		"mov.s32 %0, r0; }"
 		: "=r"(result) : "r"(x), "r"(offset), "r"(mask), "r"(x));
 #endif

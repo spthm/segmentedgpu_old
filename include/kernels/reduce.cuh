@@ -35,6 +35,7 @@
 #pragma once
 
 #include "../sgpuhost.cuh"
+#include "../device/ctareduce.cuh"
 
 namespace sgpu {
 
@@ -46,10 +47,11 @@ SGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count,
 	T identity, Op op, T* reduction_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
+	typedef typename Op::first_argument_type OpT;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
-	typedef CTAReduce<NT, Op> R;
+	typedef CTAReduce<NT, OpT, Op> R;
 
 	union Shared {
 		typename R::Storage reduceStorage;
@@ -63,12 +65,12 @@ SGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count,
 
 	// Load a full tile into register in strided order. Set out-of-range values
 	// with identity.
-	T data[VT];
+	OpT data[VT];
 	DeviceGlobalToRegDefault<NT, VT>(count2, data_global + gid, tid, data,
 		identity);
 
 	// Sum elements within each thread.
-	T x;
+	OpT x;
 	#pragma unroll
 	for(int i = 0; i < VT; ++i)
 		x = i ? op(x, data[i]) : data[i];

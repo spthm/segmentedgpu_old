@@ -198,13 +198,14 @@ SGPU_LAUNCH_BOUNDS void KernelSegReduceCsr(CsrIt csr_global,
 	T* carryOut_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
+	typedef typename Op::first_argument_type OpT;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
 	const bool HalfCapacity = (sizeof(T) > sizeof(int)) && Params::HalfCapacity;
 	const bool LdgTranspose = Params::LdgTranspose;
 
-	typedef CTAReduce<NT, Op> FastReduce;
+	typedef CTAReduce<NT, OpT, Op> FastReduce;
 	typedef CTASegReduce<NT, VT, HalfCapacity, T, Op> SegReduce;
 	typedef CTASegReduceLoad<NT, VT, HalfCapacity, LdgTranspose, T>
 		SegReduceLoad;
@@ -405,13 +406,14 @@ SGPU_LAUNCH_BOUNDS void KernelSegReduceApply(const int* threadCodes_global,
 	Op op, DestIt dest_global, T* carryOut_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
+	typedef typename Op::first_argument_type OpT;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
 	const bool HalfCapacity = (sizeof(T) > sizeof(int)) && Params::HalfCapacity;
 	const bool LdgTranspose = Params::LdgTranspose;
 
-	typedef CTAReduce<NT, Op> FastReduce;
+	typedef CTAReduce<NT, OpT, Op> FastReduce;
 	typedef CTASegReduce<NT, VT, HalfCapacity, T, Op> SegReduce;
 	typedef CTASegReduceLoad<NT, VT, HalfCapacity, LdgTranspose, T>
 		SegReduceLoad;

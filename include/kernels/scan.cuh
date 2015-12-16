@@ -35,6 +35,7 @@
 #pragma once
 
 #include "../sgpudevice.cuh"
+#include "../device/ctascan.cuh"
 #include "../kernels/reduce.cuh"
 
 namespace sgpu {
