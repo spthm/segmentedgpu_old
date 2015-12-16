@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,7 +34,7 @@
 
 #include "kernels/segreducecsr.cuh"
 
-using namespace mgpu;
+using namespace sgpu;
 
 enum TestType {
 	TestTypeNormal,
@@ -46,11 +46,11 @@ enum TestType {
 template<typename T>
 void TestCsrReduce(int count, int randomSize, int numIterations,
 	TestType testType, bool supportEmpty, CudaContext& context) {
-		 
+
 #ifdef _DEBUG
 	numIterations = 1;
 #endif
-	
+
 	std::vector<int> segCountsHost, csrHost;
 	int total = 0;
 	int numValidRows = 0;
@@ -63,65 +63,65 @@ void TestCsrReduce(int count, int randomSize, int numIterations,
 		total += segSize;
 	}
 	int numRows = (int)segCountsHost.size();
-	
+
 	std::vector<int> sourcesHost(numRows);
 	for(int i = 0; i < numRows; ++i)
 		sourcesHost[i] = Rand(0, max(0, count - randomSize));
 
-	MGPU_MEM(int) csrDevice = context.Malloc(csrHost);
-	MGPU_MEM(int) sourcesDevice = context.Malloc(sourcesHost);
+	SGPU_MEM(int) csrDevice = context.Malloc(csrHost);
+	SGPU_MEM(int) sourcesDevice = context.Malloc(sourcesHost);
 
 	// Generate random ints as input.
 	std::vector<T> dataHost(count);
 	for(int i = 0; i < count; ++i)
 		dataHost[i] = (T)Rand(1, 9);
-	MGPU_MEM(T) dataDevice = context.Malloc(dataHost);
+	SGPU_MEM(T) dataDevice = context.Malloc(dataHost);
 
-	MGPU_MEM(T) resultsDevice = context.Malloc<T>(numRows);
-		
+	SGPU_MEM(T) resultsDevice = context.Malloc<T>(numRows);
+
 	std::auto_ptr<SegReducePreprocessData> preprocessData;
 	SegReduceCsrPreprocess<T>(count, csrDevice->get(), numRows, supportEmpty,
 		&preprocessData, context);
-	
+
 	context.Start();
 	for(int it = 0; it < numIterations; ++it) {
-		if(TestTypeNormal == testType) 
+		if(TestTypeNormal == testType)
 			SegReduceCsr(dataDevice->get(), csrDevice->get(), count, numRows,
-				supportEmpty, resultsDevice->get(), (T)0, mgpu::plus<T>(), 
+				supportEmpty, resultsDevice->get(), (T)0, sgpu::plus<T>(),
 				context);
-		else if(TestTypeIndirect == testType) 
+		else if(TestTypeIndirect == testType)
 			IndirectReduceCsr(dataDevice->get(), csrDevice->get(),
 				sourcesDevice->get(), count, numRows, supportEmpty,
-				resultsDevice->get(), (T)0, mgpu::plus<T>(), context);
+				resultsDevice->get(), (T)0, sgpu::plus<T>(), context);
 		else
-			SegReduceApply(*preprocessData, dataDevice->get(), (T)0, 
-				mgpu::plus<T>(), resultsDevice->get(), context);
+			SegReduceApply(*preprocessData, dataDevice->get(), (T)0,
+				sgpu::plus<T>(), resultsDevice->get(), context);
 	}
 	double elapsed = context.Split();
 	double throughput = (double)numIterations * count / elapsed;
 
 	printf("%9.3lf M/s  %9.3lf GB/s\n", throughput / 1.0e6,
 		sizeof(T) * throughput / 1.0e9);
-	
+
 	std::vector<T> resultsHost;
 	resultsDevice->ToHost(resultsHost);
 
 	std::vector<T> resultsRef(numRows);
 	for(int row = 0; row < numRows; ++row) {
-		int begin = csrHost[row]; 
+		int begin = csrHost[row];
 		int end = (row + 1 < numRows) ? csrHost[row + 1] : count;
 		int count = end - begin;
-		
+
 		begin = (TestTypeIndirect == testType) ? sourcesHost[row] : begin;
 		end = begin + count;
-	
+
 		T x = 0;
 		for(int i = begin; i < end; ++i)
 			x = x + dataHost[i];
-		
+
 		resultsRef[row] = x;
 	}
-	
+
 	for(int i = 0; i < numRows; ++i)
 		if(resultsRef[i] != resultsHost[i]) {
 			printf("REDUCTION ERROR ON SEGMENT %d\n", i);
@@ -129,7 +129,7 @@ void TestCsrReduce(int count, int randomSize, int numIterations,
 		}
 }
 
-const int Tests[][2] = { 
+const int Tests[][2] = {
 	{ 10000, 10000 },
 	{ 50000, 10000 },
 	{ 100000, 10000 },
@@ -141,9 +141,9 @@ const int Tests[][2] = {
 	{ 10000000, 1000 },
 	{ 20000000, 1000 }
 };
-const int NumTests = sizeof(Tests) / sizeof(*Tests); 
+const int NumTests = sizeof(Tests) / sizeof(*Tests);
 
-const int SegSizes[] = { 
+const int SegSizes[] = {
 	10,
 	20,
 	50,
@@ -163,10 +163,10 @@ const int SegSizes[] = {
 const int NumSegSizes = sizeof(SegSizes) / sizeof(*SegSizes);
 
 template<typename T>
-void BenchmarkSegReduce1(TestType testType, bool supportEmpty, 
+void BenchmarkSegReduce1(TestType testType, bool supportEmpty,
 	CudaContext& context) {
 	int avSegSize = 500;
-	
+
 	const char* typeString;
 	if(TestTypeNormal == testType) typeString = "seg";
 	else if(TestTypeIndirect == testType) typeString = "indirect";
@@ -174,7 +174,7 @@ void BenchmarkSegReduce1(TestType testType, bool supportEmpty,
 
 	printf("Benchmarking %s-reduce type %s. AvSegSize = %d.\n",
 		typeString, TypeIdName<T>(), avSegSize);
-	 
+
 	for(int test = 0; test < NumTests; ++test) {
 		int count = Tests[test][0];
 
@@ -188,12 +188,12 @@ void BenchmarkSegReduce1(TestType testType, bool supportEmpty,
 }
 
 template<typename T>
-void BenchmarkSegReduce2(TestType testType, bool supportEmpty, 
+void BenchmarkSegReduce2(TestType testType, bool supportEmpty,
 	CudaContext& context) {
 
 	int count = 20000000;
 	int numIterations = 500;
-	
+
 	const char* typeString;
 	if(TestTypeNormal == testType) typeString = "seg";
 	else if(TestTypeIndirect == testType) typeString = "indirect";
@@ -201,14 +201,14 @@ void BenchmarkSegReduce2(TestType testType, bool supportEmpty,
 
 	printf("Benchmarking %s-reduce type %s. Count = %d.\n",
 		typeString, TypeIdName<T>(), count);
-	
+
 	for(int test = 0; test < NumSegSizes; ++test) {
 		int avSegSize = SegSizes[test];
-		
+
 		printf("%8s: ", FormatInteger(avSegSize).c_str());
 		TestCsrReduce<T>(count, 2 * avSegSize, numIterations, testType,
 			supportEmpty, context);
-		
+
 		context.GetAllocator()->Clear();
 	}
 	printf("\n");
@@ -227,4 +227,4 @@ int main(int argc, char** argv) {
 	BenchmarkSegReduce2<double>(testType, supportEmpty,  *context);
 
 	return 0;
-}  
+}

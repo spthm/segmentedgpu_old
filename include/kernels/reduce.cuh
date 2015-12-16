@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,18 +34,18 @@
 
 #pragma once
 
-#include "../mgpuhost.cuh"
+#include "../sgpuhost.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // KernelReduce
 
 template<typename Tuning, typename InputIt, typename T, typename Op>
-MGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count, 
+SGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count,
 	T identity, Op op, T* reduction_global) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
@@ -85,10 +85,10 @@ MGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count,
 // Reduce
 
 template<typename InputIt, typename T, typename Op>
-MGPU_HOST void Reduce(InputIt data_global, int count, T identity, Op op,
+SGPU_HOST void Reduce(InputIt data_global, int count, T identity, Op op,
 	T* reduce_global, T* reduce_host, CudaContext& context) {
 
-	MGPU_MEM(T) totalDevice;
+	SGPU_MEM(T) totalDevice;
 	if(!reduce_global) {
 		totalDevice = context.Malloc<T>(1);
 		reduce_global = totalDevice->get();
@@ -98,31 +98,31 @@ MGPU_HOST void Reduce(InputIt data_global, int count, T identity, Op op,
 		typedef LaunchBoxVT<256, 1> Tuning;
 		KernelReduce<Tuning><<<1, 256, 0, context.Stream()>>>(
 			data_global, count, identity, op, reduce_global);
-		MGPU_SYNC_CHECK("KernelReduce");
+		SGPU_SYNC_CHECK("KernelReduce");
 
 	} else if(count <= 768) {
 		typedef LaunchBoxVT<256, 3> Tuning;
 		KernelReduce<Tuning><<<1, 256, 0, context.Stream()>>>(
 			data_global, count, identity, op, reduce_global);
-		MGPU_SYNC_CHECK("KernelReduce");
+		SGPU_SYNC_CHECK("KernelReduce");
 
 	} else if(count <= 512 * ((sizeof(T) > 4) ? 4 : 8)) {
 		typedef LaunchBoxVT<512, (sizeof(T) > 4) ? 4 : 8> Tuning;
 		KernelReduce<Tuning><<<1, 512, 0, context.Stream()>>>(
 			data_global, count, identity, op, reduce_global);
-		MGPU_SYNC_CHECK("KernelReduce");
+		SGPU_SYNC_CHECK("KernelReduce");
 
 	} else {
 		// Launch a grid and reduce tiles to temporary storage.
 		typedef LaunchBoxVT<256, (sizeof(T) > 4) ? 8 : 16> Tuning;
 		int2 launch = Tuning::GetLaunchParams(context);
 		int NV = launch.x * launch.y;
-		int numBlocks = MGPU_DIV_UP(count, NV);
+		int numBlocks = SGPU_DIV_UP(count, NV);
 
-		MGPU_MEM(T) reduceDevice = context.Malloc<T>(numBlocks);
+		SGPU_MEM(T) reduceDevice = context.Malloc<T>(numBlocks);
 		KernelReduce<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(
 			data_global, count, identity, op, reduceDevice->get());
-		MGPU_SYNC_CHECK("KernelReduce");
+		SGPU_SYNC_CHECK("KernelReduce");
 
 		Reduce(reduceDevice->get(), numBlocks, identity, op, reduce_global,
 			(T*)0, context);
@@ -133,12 +133,12 @@ MGPU_HOST void Reduce(InputIt data_global, int count, T identity, Op op,
 }
 
 template<typename InputIt>
-MGPU_HOST typename std::iterator_traits<InputIt>::value_type
-Reduce(InputIt data_global, int count, CudaContext& context) { 
+SGPU_HOST typename std::iterator_traits<InputIt>::value_type
+Reduce(InputIt data_global, int count, CudaContext& context) {
 	typedef typename std::iterator_traits<InputIt>::value_type T;
 	T result;
-	Reduce(data_global, count, (T)0, mgpu::plus<T>(), (T*)0, &result, context);
+	Reduce(data_global, count, (T)0, sgpu::plus<T>(), (T*)0, &result, context);
 	return result;
 }
 
-} // namespace mgpu
+} // namespace sgpu

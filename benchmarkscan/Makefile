@@ -5,23 +5,23 @@ all: build
 
 build: benchmarkscan
 
-benchmarkscan.o: benchmarkscan.cu 
+benchmarkscan.o: benchmarkscan.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpucontext.o: ../src/mgpucontext.cu
+sgpucontext.o: ../src/sgpucontext.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpuutil.o: ../src/mgpuutil.cpp
+sgpuutil.o: ../src/sgpuutil.cpp
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-benchmarkscan: benchmarkscan.o mgpucontext.o mgpuutil.o
+benchmarkscan: benchmarkscan.o sgpucontext.o sgpuutil.o
 	nvcc $(NVCCFLAGS) -o $@ $+
 
 run: build
 	./benchmarkscan
 
 clean:
-	rm -f benchmarkscan.o mgpucontext.o mgpuutil.o benchmarkscan
+	rm -f benchmarkscan.o sgpucontext.o sgpuutil.o benchmarkscan
 
 clobber:
 	clean

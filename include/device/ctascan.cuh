@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,22 +34,22 @@
 
 #pragma once
 
-#include "../mgpuenums.h"
+#include "../sgpuenums.h"
 #include "../device/deviceutil.cuh"
 #include "../device/intrinsics.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // CTAReduce
 
-template<int NT, typename Op = mgpu::plus<int> >
+template<int NT, typename Op = sgpu::plus<int> >
 struct CTAReduce {
 	typedef typename Op::first_argument_type T;
 	enum { Size = NT, Capacity = NT };
 	struct Storage { T shared[Capacity]; };
 
-	MGPU_DEVICE static T Reduce(int tid, T x, Storage& storage, Op op = Op()) {
+	SGPU_DEVICE static T Reduce(int tid, T x, Storage& storage, Op op = Op()) {
 		storage.shared[tid] = x;
 		__syncthreads();
 
@@ -72,13 +72,13 @@ struct CTAReduce {
 #if __CUDA_ARCH__ >= 300
 
 template<int NT>
-struct CTAReduce<NT, mgpu::plus<int> > {
-	typedef mgpu::plus<int> Op;
+struct CTAReduce<NT, sgpu::plus<int> > {
+	typedef sgpu::plus<int> Op;
 	typedef int T;
 	enum { Size = NT, Capacity = WARP_SIZE };
 	struct Storage { int shared[Capacity]; };
 
-	MGPU_DEVICE static int Reduce(int tid, int x, Storage& storage, 
+	SGPU_DEVICE static int Reduce(int tid, int x, Storage& storage,
 		Op op = Op()) {
 
 		const int NumSections = WARP_SIZE;
@@ -87,7 +87,7 @@ struct CTAReduce<NT, mgpu::plus<int> > {
 		int sec = tid / SecSize;
 
 		// In the first phase, threads cooperatively find the reduction within
-		// their segment. The segments are SecSize threads (NT / WARP_SIZE) 
+		// their segment. The segments are SecSize threads (NT / WARP_SIZE)
 		// wide.
 		#pragma unroll
 		for(int offset = 1; offset < SecSize; offset *= 2)
@@ -98,7 +98,7 @@ struct CTAReduce<NT, mgpu::plus<int> > {
 		if(SecSize - 1 == lane) storage.shared[sec] = x;
 		__syncthreads();
 
-		// Reduce the totals of each input segment. The spine is WARP_SIZE 
+		// Reduce the totals of each input segment. The spine is WARP_SIZE
 		// threads wide.
 		if(tid < NumSections) {
 			x = storage.shared[tid];
@@ -117,12 +117,12 @@ struct CTAReduce<NT, mgpu::plus<int> > {
 };
 
 template<int NT>
-struct CTAReduce<NT, mgpu::maximum<int> > {
-	typedef mgpu::maximum<int> Op;
+struct CTAReduce<NT, sgpu::maximum<int> > {
+	typedef sgpu::maximum<int> Op;
 	enum { Size = NT, Capacity = WARP_SIZE };
 	struct Storage { int shared[Capacity]; };
 
-	MGPU_DEVICE static int Reduce(int tid, int x, Storage& storage, 
+	SGPU_DEVICE static int Reduce(int tid, int x, Storage& storage,
 		Op op = Op()) {
 
 		const int NumSections = WARP_SIZE;
@@ -158,14 +158,14 @@ struct CTAReduce<NT, mgpu::maximum<int> > {
 ////////////////////////////////////////////////////////////////////////////////
 // CTAScan
 
-template<int NT, typename Op = mgpu::plus<int> >
+template<int NT, typename Op = sgpu::plus<int> >
 struct CTAScan {
 	typedef typename Op::result_type T;
 	enum { Size = NT, Capacity = 2 * NT + 1 };
 	struct Storage { T shared[Capacity]; };
 
-	MGPU_DEVICE static T Scan(int tid, T x, Storage& storage, T* total,
-		MgpuScanType type = MgpuScanTypeExc, T identity = (T)0, Op op = Op()) {
+	SGPU_DEVICE static T Scan(int tid, T x, Storage& storage, T* total,
+		SgpuScanType type = SgpuScanTypeExc, T identity = (T)0, Op op = Op()) {
 
 		storage.shared[tid] = x;
 		int first = 0;
@@ -181,15 +181,15 @@ struct CTAScan {
 		}
 		*total = storage.shared[first + NT - 1];
 
-		if(MgpuScanTypeExc == type) 
+		if(SgpuScanTypeExc == type)
 			x = tid ? storage.shared[first + tid - 1] : identity;
 
 		__syncthreads();
 		return x;
 	}
-	MGPU_DEVICE static T Scan(int tid, T x, Storage& storage) {
+	SGPU_DEVICE static T Scan(int tid, T x, Storage& storage) {
 		T total;
-		return Scan(tid, x, storage, &total, MgpuScanTypeExc, (T)0, Op());
+		return Scan(tid, x, storage, &total, SgpuScanTypeExc, (T)0, Op());
 	}
 };
 
@@ -200,15 +200,15 @@ struct CTAScan {
 #if __CUDA_ARCH__ >= 300
 
 template<int NT>
-struct CTAScan<NT, mgpu::plus<int> > {
-	typedef mgpu::plus<int> Op;
+struct CTAScan<NT, sgpu::plus<int> > {
+	typedef sgpu::plus<int> Op;
 	enum { Size = NT, NumSegments = WARP_SIZE, SegSize = NT / NumSegments };
 	enum { Capacity = NumSegments + 1 };
 	struct Storage { int shared[Capacity + 1]; };
 
-	MGPU_DEVICE static int Scan(int tid, int x, Storage& storage, int* total,
-		MgpuScanType type = MgpuScanTypeExc, int identity = 0, Op op = Op()) {
-	
+	SGPU_DEVICE static int Scan(int tid, int x, Storage& storage, int* total,
+		SgpuScanType type = SgpuScanTypeExc, int identity = 0, Op op = Op()) {
+
 		// Define WARP_SIZE segments that are NT / WARP_SIZE large.
 		// Each warp makes log(SegSize) shfl_add calls.
 		// The spine makes log(WARP_SIZE) shfl_add calls.
@@ -240,7 +240,7 @@ struct CTAScan<NT, mgpu::plus<int> > {
 
 		// Add the scanned partials back in and convert to exclusive scan.
 		scan += storage.shared[segment];
-		if(MgpuScanTypeExc == type) {
+		if(SgpuScanTypeExc == type) {
 			scan -= x;
 			if(identity && !tid) scan = identity;
 		}
@@ -249,9 +249,9 @@ struct CTAScan<NT, mgpu::plus<int> > {
 
 		return scan;
 	}
-	MGPU_DEVICE static int Scan(int tid, int x, Storage& storage) {
+	SGPU_DEVICE static int Scan(int tid, int x, Storage& storage) {
 		int total;
-		return Scan(tid, x, storage, &total, MgpuScanTypeExc, 0);
+		return Scan(tid, x, storage, &total, SgpuScanTypeExc, 0);
 	}
 };
 
@@ -261,7 +261,7 @@ struct CTAScan<NT, mgpu::plus<int> > {
 // CTABinaryScan
 
 template<int NT>
-MGPU_DEVICE int CTABinaryScan(int tid, bool x, int* shared, int* total) {
+SGPU_DEVICE int CTABinaryScan(int tid, bool x, int* shared, int* total) {
 	const int NumWarps = NT / WARP_SIZE;
 	int warp = tid / WARP_SIZE;
 	int lane = (WARP_SIZE - 1);
@@ -272,7 +272,7 @@ MGPU_DEVICE int CTABinaryScan(int tid, bool x, int* shared, int* total) {
 	__syncthreads();
 
 #if __CUDA_ARCH__ >= 300
-	if(tid < NumWarps) { 
+	if(tid < NumWarps) {
 		int x = shared[tid];
 		int scan = x;
 		#pragma unroll
@@ -297,7 +297,7 @@ MGPU_DEVICE int CTABinaryScan(int tid, bool x, int* shared, int* total) {
 	__syncthreads();
 
 #endif // __CUDA_ARCH__ >= 300
-	
+
 	// Add the warp scan back into the partials.
 	int scan = shared[warp] + __popc(bfe(bits, 0, lane));
 	*total = shared[NumWarps];
@@ -305,4 +305,4 @@ MGPU_DEVICE int CTABinaryScan(int tid, bool x, int* shared, int* total) {
 	return scan;
 }
 
-} // namespace mgpu
+} // namespace sgpu

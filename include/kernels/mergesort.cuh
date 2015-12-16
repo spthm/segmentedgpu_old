@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,18 +34,18 @@
 
 #pragma once
 
-#include "../mgpuhost.cuh"
+#include "../sgpuhost.cuh"
 #include "../kernels/merge.cuh"
 
-namespace mgpu {
-	
-template<typename Tuning, bool HasValues, typename KeyIt1, typename KeyIt2, 
+namespace sgpu {
+
+template<typename Tuning, bool HasValues, typename KeyIt1, typename KeyIt2,
 	typename ValIt1, typename ValIt2, typename Comp>
-MGPU_LAUNCH_BOUNDS void KernelBlocksort(KeyIt1 keysSource_global,
-	ValIt1 valsSource_global, int count, KeyIt2 keysDest_global, 
+SGPU_LAUNCH_BOUNDS void KernelBlocksort(KeyIt1 keysSource_global,
+	ValIt1 valsSource_global, int count, KeyIt2 keysDest_global,
 	ValIt2 valsDest_global, Comp comp) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	typedef typename std::iterator_traits<KeyIt1>::value_type KeyType;
 	typedef typename std::iterator_traits<ValIt1>::value_type ValType;
 
@@ -62,7 +62,7 @@ MGPU_LAUNCH_BOUNDS void KernelBlocksort(KeyIt1 keysSource_global,
 	int block = blockIdx.x;
 	int gid = NV * block;
 	int count2 = min(NV, count - gid);
-	
+
 	// Load the values into thread order.
 	ValType threadValues[VT];
 	if(HasValues) {
@@ -73,7 +73,7 @@ MGPU_LAUNCH_BOUNDS void KernelBlocksort(KeyIt1 keysSource_global,
 
 	// Load keys into shared memory and transpose into register in thread order.
 	KeyType threadKeys[VT];
-	DeviceGlobalToShared<NT, VT>(count2, keysSource_global + gid, tid, 
+	DeviceGlobalToShared<NT, VT>(count2, keysSource_global + gid, tid,
 		shared.keys);
 	DeviceSharedToThread<VT>(shared.keys, tid, threadKeys);
 
@@ -92,17 +92,17 @@ MGPU_LAUNCH_BOUNDS void KernelBlocksort(KeyIt1 keysSource_global,
 		for(int i = 0; i < VT; ++i)
 			if(first + i >= count2) threadKeys[i] = maxKey;
 	}
-	
+
 	CTAMergesort<NT, VT, true, HasValues>(threadKeys, threadValues, shared.keys,
 		shared.values, count2, tid, comp);
 
 	// Store the sorted keys to global.
-	DeviceSharedToGlobal<NT, VT>(count2, shared.keys, tid, 
+	DeviceSharedToGlobal<NT, VT>(count2, shared.keys, tid,
 		keysDest_global + gid);
 
 	if(HasValues) {
 		DeviceThreadToShared<VT>(threadValues, tid, shared.values);
-		DeviceSharedToGlobal<NT, VT>(count2, shared.values, tid, 
+		DeviceSharedToGlobal<NT, VT>(count2, shared.values, tid,
 			valsDest_global + gid);
 	}
 }
@@ -111,7 +111,7 @@ MGPU_LAUNCH_BOUNDS void KernelBlocksort(KeyIt1 keysSource_global,
 // MergesortKeys
 
 template<typename T, typename Comp>
-MGPU_HOST void MergesortKeys(T* data_global, int count, Comp comp,
+SGPU_HOST void MergesortKeys(T* data_global, int count, Comp comp,
 	CudaContext& context) {
 
 	typedef LaunchBoxVT<
@@ -120,46 +120,46 @@ MGPU_HOST void MergesortKeys(T* data_global, int count, Comp comp,
 		256, (sizeof(T) > 4) ? 7 : 11, 0
 	> Tuning;
 	int2 launch = Tuning::GetLaunchParams(context);
-	
+
 	const int NV = launch.x * launch.y;
-	int numBlocks = MGPU_DIV_UP(count, NV);
+	int numBlocks = SGPU_DIV_UP(count, NV);
 	int numPasses = FindLog2(numBlocks, true);
 
-	MGPU_MEM(T) destDevice = context.Malloc<T>(count);
+	SGPU_MEM(T) destDevice = context.Malloc<T>(count);
 	T* source = data_global;
 	T* dest = destDevice->get();
 
 	KernelBlocksort<Tuning, false>
 		<<<numBlocks, launch.x, 0, context.Stream()>>>(source, (const int*)0,
 		count, (1 & numPasses) ? dest : source, (int*)0, comp);
-	MGPU_SYNC_CHECK("KernelBlocksort");
-	
+	SGPU_SYNC_CHECK("KernelBlocksort");
+
 	if(1 & numPasses) std::swap(source, dest);
 
 	for(int pass = 0; pass < numPasses; ++pass) {
 		int coop = 2<< pass;
-		MGPU_MEM(int) partitionsDevice = MergePathPartitions<MgpuBoundsLower>(
+		SGPU_MEM(int) partitionsDevice = MergePathPartitions<SgpuBoundsLower>(
 			source, count, source, 0, NV, coop, comp, context);
-		
+
 		KernelMerge<Tuning, false, false>
-			<<<numBlocks, launch.x, 0, context.Stream()>>>(source, 
-			(const int*)0, count, source, (const int*)0, 0, 
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(source,
+			(const int*)0, count, source, (const int*)0, 0,
 			partitionsDevice->get(), coop, dest, (int*)0, comp);
-		MGPU_SYNC_CHECK("KernelMerge");
+		SGPU_SYNC_CHECK("KernelMerge");
 
 		std::swap(dest, source);
 	}
 }
 template<typename T>
-MGPU_HOST void MergesortKeys(T* data_global, int count, CudaContext& context) {
-	MergesortKeys(data_global, count, mgpu::less<T>(), context);
+SGPU_HOST void MergesortKeys(T* data_global, int count, CudaContext& context) {
+	MergesortKeys(data_global, count, sgpu::less<T>(), context);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // MergesortPairs
 
 template<typename KeyType, typename ValType, typename Comp>
-MGPU_HOST void MergesortPairs(KeyType* keys_global, ValType* values_global,
+SGPU_HOST void MergesortPairs(KeyType* keys_global, ValType* values_global,
 	int count, Comp comp, CudaContext& context) {
 
 	typedef LaunchBoxVT<
@@ -170,20 +170,20 @@ MGPU_HOST void MergesortPairs(KeyType* keys_global, ValType* values_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	const int NV = launch.x * launch.y;
-	int numBlocks = MGPU_DIV_UP(count, NV);
+	int numBlocks = SGPU_DIV_UP(count, NV);
 	int numPasses = FindLog2(numBlocks, true);
 
-	MGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(count);
-	MGPU_MEM(ValType) valsDestDevice = context.Malloc<ValType>(count);
+	SGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(count);
+	SGPU_MEM(ValType) valsDestDevice = context.Malloc<ValType>(count);
 	KeyType* keysSource = keys_global;
 	KeyType* keysDest = keysDestDevice->get();
 	ValType* valsSource = values_global;
 	ValType* valsDest = valsDestDevice->get();
 
 	KernelBlocksort<Tuning, true><<<numBlocks, launch.x, 0, context.Stream()>>>(
-		keysSource, valsSource, count, (1 & numPasses) ? keysDest : keysSource, 
+		keysSource, valsSource, count, (1 & numPasses) ? keysDest : keysSource,
 		(1 & numPasses) ? valsDest : valsSource, comp);
-	MGPU_SYNC_CHECK("KernelBlocksort");
+	SGPU_SYNC_CHECK("KernelBlocksort");
 
 	if(1 & numPasses) {
 		std::swap(keysSource, keysDest);
@@ -192,28 +192,28 @@ MGPU_HOST void MergesortPairs(KeyType* keys_global, ValType* values_global,
 
 	for(int pass = 0; pass < numPasses; ++pass) {
 		int coop = 2<< pass;
-		MGPU_MEM(int) partitionsDevice = MergePathPartitions<MgpuBoundsLower>(
+		SGPU_MEM(int) partitionsDevice = MergePathPartitions<SgpuBoundsLower>(
 			keysSource, count, keysSource, 0, NV, coop, comp, context);
 
 		KernelMerge<Tuning, true, false>
-			<<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, 
-			valsSource, count, keysSource, valsSource, 0, 
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource,
+			valsSource, count, keysSource, valsSource, 0,
 			partitionsDevice->get(), coop, keysDest, valsDest, comp);
-		MGPU_SYNC_CHECK("KernelMerge");
+		SGPU_SYNC_CHECK("KernelMerge");
 
 		std::swap(keysDest, keysSource);
 		std::swap(valsDest, valsSource);
 	}
 }
 template<typename KeyType, typename ValType>
-MGPU_HOST void MergesortPairs(KeyType* keys_global, ValType* values_global,
+SGPU_HOST void MergesortPairs(KeyType* keys_global, ValType* values_global,
 	int count, CudaContext& context) {
-	MergesortPairs(keys_global, values_global, count, mgpu::less<KeyType>(),
+	MergesortPairs(keys_global, values_global, count, sgpu::less<KeyType>(),
 		context);
 }
 
 template<typename KeyType, typename Comp>
-MGPU_HOST void MergesortIndices(KeyType* keys_global, int* values_global,
+SGPU_HOST void MergesortIndices(KeyType* keys_global, int* values_global,
 	int count, Comp comp, CudaContext& context) {
 
 	const int NT = 256;
@@ -222,21 +222,21 @@ MGPU_HOST void MergesortIndices(KeyType* keys_global, int* values_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	const int NV = launch.x * launch.y;
-	int numBlocks = MGPU_DIV_UP(count, NV);
+	int numBlocks = SGPU_DIV_UP(count, NV);
 	int numPasses = FindLog2(numBlocks, true);
 
-	MGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(count);
-	MGPU_MEM(int) valsDestDevice = context.Malloc<int>(count);
+	SGPU_MEM(KeyType) keysDestDevice = context.Malloc<KeyType>(count);
+	SGPU_MEM(int) valsDestDevice = context.Malloc<int>(count);
 	KeyType* keysSource = keys_global;
 	KeyType* keysDest = keysDestDevice->get();
 	int* valsSource = values_global;
 	int* valsDest = valsDestDevice->get();
 
 	KernelBlocksort<Tuning, true><<<numBlocks, launch.x, 0, context.Stream()>>>(
-		keysSource, mgpu::counting_iterator<int>(0), count, 
-		(1 & numPasses) ? keysDest : keysSource, 
+		keysSource, sgpu::counting_iterator<int>(0), count,
+		(1 & numPasses) ? keysDest : keysSource,
 		(1 & numPasses) ? valsDest : valsSource, comp);
-	MGPU_SYNC_CHECK("KernelBlocksort");
+	SGPU_SYNC_CHECK("KernelBlocksort");
 
 	if(1 & numPasses) {
 		std::swap(keysSource, keysDest);
@@ -245,24 +245,24 @@ MGPU_HOST void MergesortIndices(KeyType* keys_global, int* values_global,
 
 	for(int pass = 0; pass < numPasses; ++pass) {
 		int coop = 2<< pass;
-		MGPU_MEM(int) partitionsDevice = MergePathPartitions<MgpuBoundsLower>(
+		SGPU_MEM(int) partitionsDevice = MergePathPartitions<SgpuBoundsLower>(
 			keysSource, count, keysSource, 0, NV, coop, comp, context);
 
 		KernelMerge<Tuning, true, false>
-			<<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, 
-			valsSource, count, keysSource, valsSource, 0, 
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource,
+			valsSource, count, keysSource, valsSource, 0,
 			partitionsDevice->get(), coop, keysDest, valsDest, comp);
-		MGPU_SYNC_CHECK("KernelMerge");
+		SGPU_SYNC_CHECK("KernelMerge");
 
 		std::swap(keysDest, keysSource);
 		std::swap(valsDest, valsSource);
 	}
 }
 template<typename KeyType>
-MGPU_HOST void MergesortIndices(KeyType* keys_global, int* values_global,
+SGPU_HOST void MergesortIndices(KeyType* keys_global, int* values_global,
 	int count, CudaContext& context) {
-	MergesortIndices(keys_global, values_global, count, mgpu::less<KeyType>(),
+	MergesortIndices(keys_global, values_global, count, sgpu::less<KeyType>(),
 		context);
 }
 
-} // namespace mgpu
+} // namespace sgpu

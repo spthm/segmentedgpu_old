@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -36,39 +36,39 @@
 
 #pragma once
 
-namespace mgpu {
+namespace sgpu {
 
-MGPU_HOST_DEVICE uint2 ulonglong_as_uint2(uint64 x) {
+SGPU_HOST_DEVICE uint2 ulonglong_as_uint2(uint64 x) {
 	return *reinterpret_cast<uint2*>(&x);
 }
-MGPU_HOST_DEVICE uint64 uint2_as_ulonglong(uint2 x) {
+SGPU_HOST_DEVICE uint64 uint2_as_ulonglong(uint2 x) {
 	return *reinterpret_cast<uint64*>(&x);
 }
 
-MGPU_HOST_DEVICE int2 longlong_as_int2(int64 x) {
+SGPU_HOST_DEVICE int2 longlong_as_int2(int64 x) {
 	return *reinterpret_cast<int2*>(&x);
 }
-MGPU_HOST_DEVICE int64 int2_as_longlong(int2 x) {
+SGPU_HOST_DEVICE int64 int2_as_longlong(int2 x) {
 	return *reinterpret_cast<int64*>(&x);
 }
 
-MGPU_HOST_DEVICE int2 double_as_int2(double x) {
+SGPU_HOST_DEVICE int2 double_as_int2(double x) {
 	return *reinterpret_cast<int2*>(&x);
 }
-MGPU_HOST_DEVICE double int2_as_double(int2 x) {
+SGPU_HOST_DEVICE double int2_as_double(int2 x) {
 	return *reinterpret_cast<double*>(&x);
 }
 
-MGPU_HOST_DEVICE void SetDoubleX(double& d, int x) {
+SGPU_HOST_DEVICE void SetDoubleX(double& d, int x) {
 	reinterpret_cast<int*>(&d)[0] = x;
 }
-MGPU_HOST_DEVICE int GetDoubleX(double d) {
+SGPU_HOST_DEVICE int GetDoubleX(double d) {
 	return double_as_int2(d).x;
 }
-MGPU_HOST_DEVICE void SetDoubleY(double& d, int y) {
+SGPU_HOST_DEVICE void SetDoubleY(double& d, int y) {
 	reinterpret_cast<int*>(&d)[1] = y;
 }
-MGPU_HOST_DEVICE int GetDoubleY(double d) {
+SGPU_HOST_DEVICE int GetDoubleY(double d) {
 	return double_as_int2(d).y;
 }
 
@@ -78,22 +78,22 @@ MGPU_HOST_DEVICE int GetDoubleY(double d) {
 
 #if __CUDA_ARCH__ >= 200
 
-MGPU_DEVICE uint bfe_ptx(uint x, uint bit, uint numBits) {
+SGPU_DEVICE uint bfe_ptx(uint x, uint bit, uint numBits) {
 	uint result;
-	asm("bfe.u32 %0, %1, %2, %3;" : 
+	asm("bfe.u32 %0, %1, %2, %3;" :
 		"=r"(result) : "r"(x), "r"(bit), "r"(numBits));
 	return result;
 }
 
 
-MGPU_DEVICE uint bfi_ptx(uint x, uint y, uint bit, uint numBits) {
+SGPU_DEVICE uint bfi_ptx(uint x, uint y, uint bit, uint numBits) {
 	uint result;
-	asm("bfi.b32 %0, %1, %2, %3, %4;" : 
+	asm("bfi.b32 %0, %1, %2, %3, %4;" :
 		"=r"(result) : "r"(x), "r"(y), "r"(bit), "r"(numBits));
 	return result;
 }
 
-MGPU_DEVICE uint prmt_ptx(uint a, uint b, uint index) {
+SGPU_DEVICE uint prmt_ptx(uint a, uint b, uint index) {
 	uint ret;
 	asm("prmt.b32 %0, %1, %2, %3;" : "=r"(ret) : "r"(a), "r"(b), "r"(index));
 	return ret;
@@ -105,32 +105,32 @@ MGPU_DEVICE uint prmt_ptx(uint a, uint b, uint index) {
 ////////////////////////////////////////////////////////////////////////////////
 // shfl_up
 
-__device__ __forceinline__ float shfl_up(float var, 
+__device__ __forceinline__ float shfl_up(float var,
 	unsigned int delta, int width = 32) {
 
 #if __CUDA_ARCH__ >= 300
 	var = __shfl_up(var, delta, width);
-#endif	
+#endif
 	return var;
 }
 
-__device__ __forceinline__ double shfl_up(double var, 
+__device__ __forceinline__ double shfl_up(double var,
 	unsigned int delta, int width = 32) {
 
 #if __CUDA_ARCH__ >= 300
-	int2 p = mgpu::double_as_int2(var);
+	int2 p = sgpu::double_as_int2(var);
 	p.x = __shfl_up(p.x, delta, width);
 	p.y = __shfl_up(p.y, delta, width);
-	var = mgpu::int2_as_double(p);
+	var = sgpu::int2_as_double(p);
 #endif
-	
+
 	return var;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // shfl_add
 
-MGPU_DEVICE int shfl_add(int x, int offset, int width = WARP_SIZE) {
+SGPU_DEVICE int shfl_add(int x, int offset, int width = WARP_SIZE) {
 	int result = 0;
 #if __CUDA_ARCH__ >= 300
 	int mask = (WARP_SIZE - width)<< 8;
@@ -145,7 +145,7 @@ MGPU_DEVICE int shfl_add(int x, int offset, int width = WARP_SIZE) {
 	return result;
 }
 
-MGPU_DEVICE int shfl_max(int x, int offset, int width = WARP_SIZE) {
+SGPU_DEVICE int shfl_max(int x, int offset, int width = WARP_SIZE) {
 	int result = 0;
 #if __CUDA_ARCH__ >= 300
 	int mask = (WARP_SIZE - width)<< 8;
@@ -164,7 +164,7 @@ MGPU_DEVICE int shfl_max(int x, int offset, int width = WARP_SIZE) {
 // brev, popc, clz, bfe, bfi, prmt
 
 // Reverse the bits in an integer.
-MGPU_HOST_DEVICE uint brev(uint x) { 
+SGPU_HOST_DEVICE uint brev(uint x) {
 #if __CUDA_ARCH__ >= 200
 	uint y = __brev(x);
 #else
@@ -176,7 +176,7 @@ MGPU_HOST_DEVICE uint brev(uint x) {
 }
 
 // Count number of bits in a register.
-MGPU_HOST_DEVICE int popc(uint x) {
+SGPU_HOST_DEVICE int popc(uint x) {
 #if __CUDA_ARCH__ >= 200
 	return __popc(x);
 #else
@@ -188,7 +188,7 @@ MGPU_HOST_DEVICE int popc(uint x) {
 }
 
 // Count leading zeros - start from most significant bit.
-MGPU_HOST_DEVICE int clz(int x) {
+SGPU_HOST_DEVICE int clz(int x) {
 #if __CUDA_ARCH__ >= 200
 	return __clz(x);
 #else
@@ -199,7 +199,7 @@ MGPU_HOST_DEVICE int clz(int x) {
 }
 
 // Find first set - start from least significant bit. LSB is 1. ffs(0) is 0.
-MGPU_HOST_DEVICE int ffs(int x) {
+SGPU_HOST_DEVICE int ffs(int x) {
 #if __CUDA_ARCH__ >= 200
 	return __ffs(x);
 #else
@@ -209,7 +209,7 @@ MGPU_HOST_DEVICE int ffs(int x) {
 #endif
 }
 
-MGPU_HOST_DEVICE uint bfe(uint x, uint bit, uint numBits) {
+SGPU_HOST_DEVICE uint bfe(uint x, uint bit, uint numBits) {
 #if __CUDA_ARCH__ >= 200
 	return bfe_ptx(x, bit, numBits);
 #else
@@ -217,7 +217,7 @@ MGPU_HOST_DEVICE uint bfe(uint x, uint bit, uint numBits) {
 #endif
 }
 
-MGPU_HOST_DEVICE uint bfi(uint x, uint y, uint bit, uint numBits) {
+SGPU_HOST_DEVICE uint bfi(uint x, uint y, uint bit, uint numBits) {
 	uint result;
 #if __CUDA_ARCH__ >= 200
 	result = bfi_ptx(x, y, bit, numBits);
@@ -230,7 +230,7 @@ MGPU_HOST_DEVICE uint bfi(uint x, uint y, uint bit, uint numBits) {
 	return result;
 }
 
-MGPU_HOST_DEVICE uint prmt(uint a, uint b, uint index) {
+SGPU_HOST_DEVICE uint prmt(uint a, uint b, uint index) {
 	uint result;
 #if __CUDA_ARCH__ >= 200
 	result = prmt_ptx(a, b, index);
@@ -248,26 +248,26 @@ MGPU_HOST_DEVICE uint prmt(uint a, uint b, uint index) {
 }
 
 // Find log2(x) and optionally round up to the next integer logarithm.
-MGPU_HOST_DEVICE int FindLog2(int x, bool roundUp = false) {
+SGPU_HOST_DEVICE int FindLog2(int x, bool roundUp = false) {
 	int a = 31 - clz(x);
-	if(roundUp) a += !MGPU_IS_POW_2(x);
+	if(roundUp) a += !SGPU_IS_POW_2(x);
 	return a;
-} 
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // vset4
 
 #if __CUDA_ARCH__ >= 300
 
-// Performs four byte-wise comparisons and returns 1 for each byte that 
+// Performs four byte-wise comparisons and returns 1 for each byte that
 // satisfies the conditional, and zero otherwise.
-MGPU_DEVICE uint vset4_lt_add_ptx(uint a, uint b, uint c) {
+SGPU_DEVICE uint vset4_lt_add_ptx(uint a, uint b, uint c) {
 	uint result;
-	asm("vset4.u32.u32.lt.add %0, %1, %2, %3;" : 
+	asm("vset4.u32.u32.lt.add %0, %1, %2, %3;" :
 		"=r"(result) : "r"(a), "r"(b), "r"(c));
 	return result;
 }
-MGPU_DEVICE uint vset4_eq_ptx(uint a, uint b) {
+SGPU_DEVICE uint vset4_eq_ptx(uint a, uint b) {
 	uint result;
 	asm("vset4.u32.u32.eq %0, %1, %2, %3;" :
 		"=r"(result) : "r"(a), "r"(b), "r"(0));
@@ -275,7 +275,7 @@ MGPU_DEVICE uint vset4_eq_ptx(uint a, uint b) {
 }
 #endif // __CUDA_ARCH__ >= 300
 
-MGPU_HOST_DEVICE uint vset4_lt_add(uint a, uint b, uint c) {
+SGPU_HOST_DEVICE uint vset4_lt_add(uint a, uint b, uint c) {
 	uint result;
 #if __CUDA_ARCH__ >= 300
 	result = vset4_lt_add_ptx(a, b, c);
@@ -289,7 +289,7 @@ MGPU_HOST_DEVICE uint vset4_lt_add(uint a, uint b, uint c) {
 	return result;
 }
 
-MGPU_HOST_DEVICE uint vset4_eq(uint a, uint b) {
+SGPU_HOST_DEVICE uint vset4_eq(uint a, uint b) {
 	uint result;
 #if __CUDA_ARCH__ >= 300
 	result = vset4_eq_ptx(a, b);
@@ -306,7 +306,7 @@ MGPU_HOST_DEVICE uint vset4_eq(uint a, uint b) {
 ////////////////////////////////////////////////////////////////////////////////
 //
 
-MGPU_HOST_DEVICE uint umulhi(uint x, uint y) {
+SGPU_HOST_DEVICE uint umulhi(uint x, uint y) {
 #if __CUDA_ARCH__ >= 100
 	return __umulhi(x, y);
 #else
@@ -320,7 +320,7 @@ MGPU_HOST_DEVICE uint umulhi(uint x, uint y) {
 // intrinsic for __CUDA_ARCH__ >= 320 && __CUDA_ARCH__ < 400 for types supported
 // by __ldg in sm_32_intrinsics.h
 
-template<typename T> 
+template<typename T>
 struct IsLdgType {
 	enum { value = false };
 };
@@ -329,13 +329,13 @@ struct IsLdgType {
 
 template<typename T, bool UseLDG = IsLdgType<T>::value>
 struct LdgShim {
-	MGPU_DEVICE static T Ldg(const T* p) {
+	SGPU_DEVICE static T Ldg(const T* p) {
 		return *p;
 	}
 };
 
 #if __CUDA_ARCH__ >= 320 && __CUDA_ARCH__ < 400
-	
+
 	// List of __ldg-compatible types from sm_32_intrinsics.h.
 	DEFINE_LDG_TYPE(char)
 	DEFINE_LDG_TYPE(short)
@@ -368,20 +368,20 @@ struct LdgShim {
 	DEFINE_LDG_TYPE(double2)
 
 	template<typename T> struct LdgShim<T, true> {
-		MGPU_DEVICE static T Ldg(const T* p) {
+		SGPU_DEVICE static T Ldg(const T* p) {
 			return __ldg(p);
 		}
 	};
 #endif
 
 template<typename T>
-MGPU_DEVICE T ldg(const T* p) {
+SGPU_DEVICE T ldg(const T* p) {
 	return LdgShim<T>::Ldg(p);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Fast division for 31-bit integers. 
+// Fast division for 31-bit integers.
 // Uses the method in Hacker's Delight (2nd edition) page 228.
 // Evaluates for denom > 1 and x < 2^31.
 struct FastDivide {
@@ -389,10 +389,10 @@ struct FastDivide {
 	uint coef;
 	uint shift;
 
-	MGPU_HOST_DEVICE uint Divide(uint x) {
+	SGPU_HOST_DEVICE uint Divide(uint x) {
 		return umulhi(x, coef)>> shift;
 	}
-	MGPU_HOST_DEVICE uint Modulus(uint x) {
+	SGPU_HOST_DEVICE uint Modulus(uint x) {
 		return x - Divide(x) * denom;
 	}
 
@@ -404,4 +404,4 @@ struct FastDivide {
 	}
 };
 
-} // namespace mgpu
+} // namespace sgpu

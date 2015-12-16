@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,39 +34,39 @@
 
 #pragma once
 
-#include "../mgpuhost.cuh"
+#include "../sgpuhost.cuh"
 #include "../device/ctamerge.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // BinarySearchPartitions
 
-template<int NT, MgpuBounds Bounds, typename It, typename Comp>
+template<int NT, SgpuBounds Bounds, typename It, typename Comp>
 __global__ void KernelBinarySearch(int count, It data_global, int numItems,
 	int nv, int* partitions_global, int numSearches, Comp comp) {
 
 	int gid = NT * blockIdx.x + threadIdx.x;
 	if(gid < numSearches) {
-		int p = BinarySearch<Bounds>(data_global, numItems, 
+		int p = BinarySearch<Bounds>(data_global, numItems,
 			min(nv * gid, count), comp);
 		partitions_global[gid] = p;
 	}
 }
 
-template<MgpuBounds Bounds, typename It1, typename Comp>
-MGPU_MEM(int) BinarySearchPartitions(int count, It1 data_global, int numItems,
+template<SgpuBounds Bounds, typename It1, typename Comp>
+SGPU_MEM(int) BinarySearchPartitions(int count, It1 data_global, int numItems,
 	int nv, Comp comp, CudaContext& context) {
 
 	const int NT = 64;
-	int numBlocks = MGPU_DIV_UP(count, nv);
-	int numPartitionBlocks = MGPU_DIV_UP(numBlocks + 1, NT);
-	MGPU_MEM(int) partitionsDevice = context.Malloc<int>(numBlocks + 1);
+	int numBlocks = SGPU_DIV_UP(count, nv);
+	int numPartitionBlocks = SGPU_DIV_UP(numBlocks + 1, NT);
+	SGPU_MEM(int) partitionsDevice = context.Malloc<int>(numBlocks + 1);
 
 	KernelBinarySearch<NT, Bounds>
-		<<<numPartitionBlocks, NT, 0, context.Stream()>>>(count, data_global, 
+		<<<numPartitionBlocks, NT, 0, context.Stream()>>>(count, data_global,
 		numItems, nv, partitionsDevice->get(), numBlocks + 1, comp);
-	MGPU_SYNC_CHECK("KernelBinarySearch");
+	SGPU_SYNC_CHECK("KernelBinarySearch");
 
 	return partitionsDevice;
 }
@@ -74,8 +74,8 @@ MGPU_MEM(int) BinarySearchPartitions(int count, It1 data_global, int numItems,
 ////////////////////////////////////////////////////////////////////////////////
 // MergePathPartitions
 
-template<int NT, MgpuBounds Bounds, typename It1, typename It2, typename Comp>
-__global__ void KernelMergePartition(It1 a_global, int aCount, It2 b_global, 
+template<int NT, SgpuBounds Bounds, typename It1, typename It2, typename Comp>
+__global__ void KernelMergePartition(It1 a_global, int aCount, It2 b_global,
 	int bCount, int nv, int coop, int* mp_global, int numSearches, Comp comp) {
 
 	int partition = NT * blockIdx.x + threadIdx.x;
@@ -99,20 +99,20 @@ __global__ void KernelMergePartition(It1 a_global, int aCount, It2 b_global,
 	}
 }
 
-template<MgpuBounds Bounds, typename It1, typename It2, typename Comp>
-MGPU_MEM(int) MergePathPartitions(It1 a_global, int aCount, It2 b_global,
+template<SgpuBounds Bounds, typename It1, typename It2, typename Comp>
+SGPU_MEM(int) MergePathPartitions(It1 a_global, int aCount, It2 b_global,
 	int bCount, int nv, int coop, Comp comp, CudaContext& context) {
 
 	const int NT = 64;
-	int numPartitions = MGPU_DIV_UP(aCount + bCount, nv);
-	int numPartitionBlocks = MGPU_DIV_UP(numPartitions + 1, NT);
-	MGPU_MEM(int) partitionsDevice = context.Malloc<int>(numPartitions + 1);
+	int numPartitions = SGPU_DIV_UP(aCount + bCount, nv);
+	int numPartitionBlocks = SGPU_DIV_UP(numPartitions + 1, NT);
+	SGPU_MEM(int) partitionsDevice = context.Malloc<int>(numPartitions + 1);
 
 	KernelMergePartition<NT, Bounds>
 		<<<numPartitionBlocks, NT, 0, context.Stream()>>>(a_global, aCount,
-		b_global, bCount, nv, coop, partitionsDevice->get(), numPartitions + 1, 
+		b_global, bCount, nv, coop, partitionsDevice->get(), numPartitions + 1,
 		comp);
-	MGPU_SYNC_CHECK("KernelMergePartition");
+	SGPU_SYNC_CHECK("KernelMergePartition");
 
 	return partitionsDevice;
 }
@@ -122,7 +122,7 @@ MGPU_MEM(int) MergePathPartitions(It1 a_global, int aCount, It2 b_global,
 
 template<int NT, bool Duplicates, typename InputIt1, typename InputIt2,
 	typename Comp>
-__global__ void KernelSetPartition(InputIt1 a_global, int aCount, 
+__global__ void KernelSetPartition(InputIt1 a_global, int aCount,
 	InputIt2 b_global, int bCount, int nv, int* bp_global, int numSearches,
 	Comp comp) {
 
@@ -130,7 +130,7 @@ __global__ void KernelSetPartition(InputIt1 a_global, int aCount,
 	if(gid < numSearches) {
 		int diag = min(aCount + bCount, gid * nv);
 
-		// Search with level 4 bias. This helps the binary search converge 
+		// Search with level 4 bias. This helps the binary search converge
 		// quickly for small runs of duplicates (the common case).
 		int2 bp = BalancedPath<Duplicates, int64>(a_global, aCount, b_global,
 			bCount, diag, 4, comp);
@@ -141,20 +141,20 @@ __global__ void KernelSetPartition(InputIt1 a_global, int aCount,
 }
 
 template<bool Duplicates, typename It1, typename It2, typename Comp>
-MGPU_MEM(int) FindSetPartitions(It1 a_global, int aCount, It2 b_global,
+SGPU_MEM(int) FindSetPartitions(It1 a_global, int aCount, It2 b_global,
 	int bCount, int nv, Comp comp, CudaContext& context) {
 
 	const int NT = 64;
-	int numPartitions = MGPU_DIV_UP(aCount + bCount, nv);
-	int numPartitionBlocks = MGPU_DIV_UP(numPartitions + 1, NT);
-	MGPU_MEM(int) partitionsDevice = context.Malloc<int>(numPartitions + 1);
+	int numPartitions = SGPU_DIV_UP(aCount + bCount, nv);
+	int numPartitionBlocks = SGPU_DIV_UP(numPartitions + 1, NT);
+	SGPU_MEM(int) partitionsDevice = context.Malloc<int>(numPartitions + 1);
 
 	KernelSetPartition<NT, Duplicates>
 		<<<numPartitionBlocks, NT, 0, context.Stream()>>>(a_global, aCount,
 		b_global, bCount, nv, partitionsDevice->get(), numPartitions + 1, comp);
-	MGPU_SYNC_CHECK("KernelSetPartition");
+	SGPU_SYNC_CHECK("KernelSetPartition");
 
 	return partitionsDevice;
 }
 
-} // namespace mgpu
+} // namespace sgpu

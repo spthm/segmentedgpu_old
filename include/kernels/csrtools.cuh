@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -38,7 +38,7 @@
 #include "../kernels/scan.cuh"
 #include "../kernels/bulkinsert.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // KernelPartitionCsrPlus
@@ -47,19 +47,19 @@ namespace mgpu {
 template<int NT, typename CsrIt>
 __global__ void KernelPartitionCsrSegReduce(int nz, int nv, CsrIt csr_global,
 	int numRows, const int* numRows2, int numPartitions, int* limits_global) {
-		
+
 	if(numRows2) numRows = *numRows2;
 
 	int gid = NT * blockIdx.x + threadIdx.x;
-	if(gid < numPartitions) { 
+	if(gid < numPartitions) {
 		int key = min(nv * gid, nz);
 
 		int ub;
 		if(key == nz) ub = numRows;
 		else {
 			// Upper-bound search for this partition.
-			ub = BinarySearch<MgpuBoundsUpper>(csr_global, numRows, key, 
-				mgpu::less<int>()) - 1;
+			ub = BinarySearch<SgpuBoundsUpper>(csr_global, numRows, key,
+				sgpu::less<int>()) - 1;
 
 			// Check if limit points to matching value.
 			if(key != csr_global[ub]) ub |= 0x80000000;
@@ -69,18 +69,18 @@ __global__ void KernelPartitionCsrSegReduce(int nz, int nv, CsrIt csr_global,
 }
 
 template<typename CsrIt>
-MGPU_HOST MGPU_MEM(int) PartitionCsrSegReduce(int count, int nv,
-	CsrIt csr_global, int numRows, const int* numRows2, int numPartitions, 
+SGPU_HOST SGPU_MEM(int) PartitionCsrSegReduce(int count, int nv,
+	CsrIt csr_global, int numRows, const int* numRows2, int numPartitions,
 	CudaContext& context) {
 
 	// Allocate one int per partition.
-	MGPU_MEM(int) limitsDevice = context.Malloc<int>(numPartitions);
+	SGPU_MEM(int) limitsDevice = context.Malloc<int>(numPartitions);
 
-	int numBlocks2 = MGPU_DIV_UP(numPartitions, 64);
+	int numBlocks2 = SGPU_DIV_UP(numPartitions, 64);
 	KernelPartitionCsrSegReduce<64><<<numBlocks2, 64, 0, context.Stream()>>>(
 		count, nv, csr_global, numRows, numRows2, numPartitions,
 		limitsDevice->get());
-	MGPU_SYNC_CHECK("KernelPartitionCsrSegReduce");
+	SGPU_SYNC_CHECK("KernelPartitionCsrSegReduce");
 
 	return limitsDevice;
 }
@@ -89,10 +89,10 @@ MGPU_HOST MGPU_MEM(int) PartitionCsrSegReduce(int count, int nv,
 // KernelBuildCsrPlus
 
 template<typename Tuning, typename CsrIt>
-MGPU_LAUNCH_BOUNDS void KernelBuildCsrPlus(int count, CsrIt csr_global,
+SGPU_LAUNCH_BOUNDS void KernelBuildCsrPlus(int count, CsrIt csr_global,
 	const int* limits_global, int* threadCodes_global) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
@@ -116,14 +116,14 @@ MGPU_LAUNCH_BOUNDS void KernelBuildCsrPlus(int count, CsrIt csr_global,
 	int numRows = range.end - range.begin;
 
 	// Load the Csr interval.
-	DeviceGlobalToSharedLoop<NT, VT>(numRows, csr_global + range.begin, tid, 
+	DeviceGlobalToSharedLoop<NT, VT>(numRows, csr_global + range.begin, tid,
 		shared.csr);
 
 	// Flatten Csr->COO and return the segmented scan terms.
 	int rows[VT + 1], rowStarts[VT];
-	SegReduceTerms terms = DeviceSegReducePrepare<NT, VT>(shared.csr, 
+	SegReduceTerms terms = DeviceSegReducePrepare<NT, VT>(shared.csr,
 		numRows, tid, gid, range.flushLast, rows, rowStarts);
-	
+
 	// Combine terms into bit field.
 	// threadCodes:
 	// 12:0 - end flags for up to 13 values per thread.
@@ -134,33 +134,33 @@ MGPU_LAUNCH_BOUNDS void KernelBuildCsrPlus(int count, CsrIt csr_global,
 }
 
 template<typename Tuning, typename CsrIt>
-MGPU_HOST MGPU_MEM(int) BuildCsrPlus(int count, CsrIt csr_global, 
+SGPU_HOST SGPU_MEM(int) BuildCsrPlus(int count, CsrIt csr_global,
 	const int* limits_global, int numBlocks, CudaContext& context) {
 
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	// Allocate one int per thread.
-	MGPU_MEM(int) threadCodesDevice = context.Malloc<int>(launch.x * numBlocks);
+	SGPU_MEM(int) threadCodesDevice = context.Malloc<int>(launch.x * numBlocks);
 
 	KernelBuildCsrPlus<Tuning>
 		<<<numBlocks, launch.x, 0, context.Stream()>>>(count, csr_global,
 		limits_global, threadCodesDevice->get());
-	MGPU_SYNC_CHECK("KernelBuildCsrPlus");
+	SGPU_SYNC_CHECK("KernelBuildCsrPlus");
 
 	return threadCodesDevice;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // CsrStripEmpties
-// Removes empty rows from a Csr array. The returned array has numRows2 
-// non-empty rows in the front followed by (numRows - numRows2) BulkInsert 
+// Removes empty rows from a Csr array. The returned array has numRows2
+// non-empty rows in the front followed by (numRows - numRows2) BulkInsert
 // offsets in the back.
 
 template<typename Tuning, typename CsrIt>
-MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesUpsweep(int nz, CsrIt csr_global, 
+SGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesUpsweep(int nz, CsrIt csr_global,
 	int numRows, int* counts_global) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
@@ -198,11 +198,11 @@ MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesUpsweep(int nz, CsrIt csr_global,
 }
 
 template<typename Tuning, bool Indirect, typename CsrIt, typename SourcesIt>
-MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesDownsweep(int nz, CsrIt csr_global,
-	SourcesIt sources_global, int numRows, const int* scan_global, 
+SGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesDownsweep(int nz, CsrIt csr_global,
+	SourcesIt sources_global, int numRows, const int* scan_global,
 	int* csr2_global, int* sources2_global) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
@@ -245,7 +245,7 @@ MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesDownsweep(int nz, CsrIt csr_global,
 		&totalValid);
 	int validScan = scan;
 	int invalidScan = totalValid + VT * tid - validScan;
-	
+
 	// Stream the valid row offsets to the front and the invalid row indices
 	// to the back.
 	#pragma unroll
@@ -257,7 +257,7 @@ MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesDownsweep(int nz, CsrIt csr_global,
 	}
 	__syncthreads();
 
-	// Cooperatively store valid row offsets and invalid row insertion points 
+	// Cooperatively store valid row offsets and invalid row insertion points
 	// to global memory.
 	for(int i = tid; i < totalValid; i += NT)
 		csr2_global[scanOffset + i] = shared.indices[i];
@@ -266,7 +266,7 @@ MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesDownsweep(int nz, CsrIt csr_global,
 	int invalidRank = gid - scanOffset;
 	int totalInvalid = numRows2 - totalValid;
 	for(int i = tid; i < totalInvalid; i += NT) {
-		// Subtract the rank of the invalid row from its index. This serves as 
+		// Subtract the rank of the invalid row from its index. This serves as
 		// a BulkInsert-style insertion point.
 		int invalidRank2 = invalidRank + i;
 		csr2_global[invalidStart + invalidRank2] =
@@ -299,7 +299,7 @@ MGPU_LAUNCH_BOUNDS void KernelCsrStripEmptiesDownsweep(int nz, CsrIt csr_global,
 }
 
 template<bool Indirect, typename CsrIt, typename SourcesIt>
-MGPU_HOST void CsrStripEmpties(int nz, CsrIt csr_global,
+SGPU_HOST void CsrStripEmpties(int nz, CsrIt csr_global,
 	SourcesIt sources_global, int numRows, int* csr2_global,
 	int* sources2_global, int* numRows2, CudaContext& context) {
 
@@ -311,27 +311,27 @@ MGPU_HOST void CsrStripEmpties(int nz, CsrIt csr_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 	int NV = launch.x * launch.y;
 
-	int numBlocks = MGPU_DIV_UP(numRows, NV);
-	MGPU_MEM(int) countsDevice = context.Malloc<int>(numBlocks + 1);
+	int numBlocks = SGPU_DIV_UP(numRows, NV);
+	SGPU_MEM(int) countsDevice = context.Malloc<int>(numBlocks + 1);
 
 	// Count the non-empty row counts for each CTA.
 	KernelCsrStripEmptiesUpsweep<Tuning>
 		<<<numBlocks, launch.x, 0, context.Stream()>>>(
 		nz, csr_global, numRows, countsDevice->get());
-	MGPU_SYNC_CHECK("KernelCsrStripEmpties");
+	SGPU_SYNC_CHECK("KernelCsrStripEmpties");
 
 	// Scan the non-empty row counts.
-	Scan<MgpuScanTypeExc>(countsDevice->get(), numBlocks, 0, mgpu::plus<int>(),
-		countsDevice->get() + numBlocks, numRows2, countsDevice->get(), 
+	Scan<SgpuScanTypeExc>(countsDevice->get(), numBlocks, 0, sgpu::plus<int>(),
+		countsDevice->get() + numBlocks, numRows2, countsDevice->get(),
 		context);
 
-	// Compact the non-empty rows to the front. Append the indices of all 
+	// Compact the non-empty rows to the front. Append the indices of all
 	// empty rows to the end of the array.
 	KernelCsrStripEmptiesDownsweep<Tuning, Indirect>
 		<<<numBlocks, launch.x, 0, context.Stream()>>>(
-		nz, csr_global, sources_global, numRows, countsDevice->get(), 
+		nz, csr_global, sources_global, numRows, countsDevice->get(),
 		csr2_global, sources2_global);
-	MGPU_SYNC_CHECK("KernelCsrStringEmptiesDownsweep");
+	SGPU_SYNC_CHECK("KernelCsrStringEmptiesDownsweep");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -353,19 +353,19 @@ __global__ void KernelCsrBulkInsertPartition(const int* csr2_global,
 
 	if(partition < numSearches) {
 		int diag = nv * partition;
-		int mp = MergePath<MgpuBoundsLower>(indices_global, aCount, 
-			mgpu::counting_iterator<int>(0), bCount, min(diag, numRows), 
-			mgpu::less<int>());
+		int mp = MergePath<SgpuBoundsLower>(indices_global, aCount,
+			sgpu::counting_iterator<int>(0), bCount, min(diag, numRows),
+			sgpu::less<int>());
 		mp_global[partition] = mp;
 	}
 }
 
 template<typename Tuning, typename T, typename OutputIt>
-MGPU_LAUNCH_BOUNDS void KernelCsrBulkInsertSpecial(const int* csr2_global,
+SGPU_LAUNCH_BOUNDS void KernelCsrBulkInsertSpecial(const int* csr2_global,
 	const T* data_global, int numRows, const int* mp_global, T identity,
 	OutputIt dest_global) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	const int NT = Params::NT;
 	const int VT = Params::VT;
 	const int NV = NT * VT;
@@ -391,7 +391,7 @@ MGPU_LAUNCH_BOUNDS void KernelCsrBulkInsertSpecial(const int* csr2_global,
 
 	int indices[VT];
 	DeviceSharedToReg<NT, VT>(shared.storage.indices, tid, indices);
-	
+
 	int b0 = range.z;		// B is source array offset.
 	aCount = range.y - range.x;
 
@@ -408,35 +408,35 @@ MGPU_LAUNCH_BOUNDS void KernelCsrBulkInsertSpecial(const int* csr2_global,
 }
 
 template<typename T, typename DestIt>
-MGPU_HOST void CsrBulkInsert(const int* csr2_global, int numRows, 
+SGPU_HOST void CsrBulkInsert(const int* csr2_global, int numRows,
 	const T* data_global, T identity, DestIt dest_global,
 	CudaContext& context) {
 
 	typedef LaunchBoxVT<
-		128, 3, 0, 
+		128, 3, 0,
 		128, 3, 0,
 		128, 3, 0
 	> Tuning;
 	int2 launch = Tuning::GetLaunchParams(context);
 	int NV = launch.x * launch.y;
 
-	int numBlocks = MGPU_DIV_UP(numRows, NV);
+	int numBlocks = SGPU_DIV_UP(numRows, NV);
 	int numPartitions = numBlocks + 1;
-	int numPartitionBlocks = MGPU_DIV_UP(numPartitions, 64);
+	int numPartitionBlocks = SGPU_DIV_UP(numPartitions, 64);
 
 	// Run a Merge Path partitioning to divide the data over equal intervals.
-	MGPU_MEM(int) partitionsDevice = context.Malloc<int>(numPartitions);
+	SGPU_MEM(int) partitionsDevice = context.Malloc<int>(numPartitions);
 	KernelCsrBulkInsertPartition<64>
-		<<<numPartitionBlocks, 64, 0, context.Stream()>>>(csr2_global, 
+		<<<numPartitionBlocks, 64, 0, context.Stream()>>>(csr2_global,
 		numRows, partitionsDevice->get(), numPartitions, NV);
-	MGPU_SYNC_CHECK("KernelCsrBulkInsertPartition");
+	SGPU_SYNC_CHECK("KernelCsrBulkInsertPartition");
 
 	// Launch the special Csr BulkInsert kernel to plug the empty rows with
 	// the identity element.
 	KernelCsrBulkInsertSpecial<Tuning>
 		<<<numBlocks, launch.x, 0, context.Stream()>>>(csr2_global,
 		data_global, numRows, partitionsDevice->get(), identity, dest_global);
-	MGPU_SYNC_CHECK("KernelCsrBulkInsertSpecial");
+	SGPU_SYNC_CHECK("KernelCsrBulkInsertSpecial");
 }
 
-} // namespace mgpu
+} // namespace sgpu

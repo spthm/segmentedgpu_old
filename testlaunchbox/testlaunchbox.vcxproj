@@ -19,11 +19,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="..\src\mgpucontext.cu" />
+    <CudaCompile Include="..\src\sgpucontext.cu" />
     <CudaCompile Include="testlaunchbox.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\mgpuutil.cpp" />
+    <ClCompile Include="..\src\sgpuutil.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{6E687263-9226-403F-A5E5-09271AEFC80B}</ProjectGuid>

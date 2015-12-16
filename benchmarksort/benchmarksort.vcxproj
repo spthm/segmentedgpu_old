@@ -19,11 +19,11 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <CudaCompile Include="..\src\mgpucontext.cu" />
+    <CudaCompile Include="..\src\sgpucontext.cu" />
     <CudaCompile Include="benchmarksort.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\mgpuutil.cpp" />
+    <ClCompile Include="..\src\sgpuutil.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E17F3CBC-36E3-4009-836C-07EF5580E89E}</ProjectGuid>

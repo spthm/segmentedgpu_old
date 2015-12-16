@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -40,7 +40,7 @@
 #include <algorithm>
 #include <string>
 
-namespace mgpu {
+namespace sgpu {
 
 // Like sprintf but dynamically allocates sufficient output to hold the entire
 // text.
@@ -71,7 +71,7 @@ struct FormatOpMaskBit {
 	FormatOpMaskBit(const char* f) : format(f) { }
 
 	std::string operator()(int index, int x) const {
-		return stringprintf(format, (0x80000000 & x) ? '*' : ' ', 
+		return stringprintf(format, (0x80000000 & x) ? '*' : ' ',
 			0x7fffffff & x);
 	}
 };
@@ -94,8 +94,8 @@ struct FormatOpMarkArray {
 template<typename T, typename Op>
 std::string FormatArrayOp(const T* data, size_t count, Op op, int numCols) {
 	std::string s;
-	size_t numRows = MGPU_DIV_UP(count, numCols);
-	for(size_t row(0); row < numRows; ++row) { 
+	size_t numRows = SGPU_DIV_UP(count, numCols);
+	for(size_t row(0); row < numRows; ++row) {
 		size_t left = row * numCols;
 		s.append(stringprintf("%5d:  ", left));
 
@@ -109,13 +109,13 @@ std::string FormatArrayOp(const T* data, size_t count, Op op, int numCols) {
 }
 
 template<typename T>
-std::string FormatArray(const T* data, size_t count, const char* format, 
+std::string FormatArray(const T* data, size_t count, const char* format,
 	int numCols) {
 	return FormatArrayOp(data, count, FormatOpPrintf(format), numCols);
 }
 
 template<typename T>
-std::string FormatArray(const std::vector<T>& data, const char* format, 
+std::string FormatArray(const std::vector<T>& data, const char* format,
 	int numCols) {
 	return FormatArray(&data[0], (int)data.size(), format, numCols);
 }
@@ -145,4 +145,4 @@ void PrintArrayOp(const std::vector<T>& data, Op op, int numCols) {
 
 
 
-} // namespace mgpu
+} // namespace sgpu

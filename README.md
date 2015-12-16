@@ -1,8 +1,7 @@
-moderngpu
-=========
+segmentedgpu
+============
 
-Design patterns for GPU computing
+Segmented parallel primitives for GPUs.
 
-Modern GPU is code and commentary intended to promote new and productive ways of thinking about GPU computing.
-
+Much of the code is based on moderngpu:
 http://nvlabs.github.io/moderngpu

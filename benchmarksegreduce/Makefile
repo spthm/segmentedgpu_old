@@ -5,23 +5,23 @@ all: build
 
 build: benchmarksegreduce
 
-benchmarksegreduce.o: benchmarksegreduce.cu 
+benchmarksegreduce.o: benchmarksegreduce.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpucontext.o: ../src/mgpucontext.cu
+sgpucontext.o: ../src/sgpucontext.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpuutil.o: ../src/mgpuutil.cpp
+sgpuutil.o: ../src/sgpuutil.cpp
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-benchmarksegreduce: benchmarksegreduce.o mgpucontext.o mgpuutil.o
+benchmarksegreduce: benchmarksegreduce.o sgpucontext.o sgpuutil.o
 	nvcc $(NVCCFLAGS) -o $@ $+
 
 run: build
 	./benchmarksegreduce
 
 clean:
-	rm -f benchmarksegreduce.o mgpucontext.o mgpuutil.o benchmarksegreduce
+	rm -f benchmarksegreduce.o sgpucontext.o sgpuutil.o benchmarksegreduce
 
 clobber:
 	clean

@@ -5,23 +5,23 @@ all: build
 
 build: benchmarklaunchbox
 
-benchmarklaunchbox.o: benchmarklaunchbox.cu 
+benchmarklaunchbox.o: benchmarklaunchbox.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpucontext.o: ../src/mgpucontext.cu
+sgpucontext.o: ../src/sgpucontext.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpuutil.o: ../src/mgpuutil.cpp
+sgpuutil.o: ../src/sgpuutil.cpp
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-benchmarklaunchbox: benchmarklaunchbox.o mgpucontext.o mgpuutil.o
+benchmarklaunchbox: benchmarklaunchbox.o sgpucontext.o sgpuutil.o
 	nvcc $(NVCCFLAGS) -o $@ $+
 
 run: build
 	./benchmarklaunchbox
 
 clean:
-	rm -f benchmarklaunchbox.o mgpucontext.o mgpuutil.o benchmarklaunchbox
+	rm -f benchmarklaunchbox.o sgpucontext.o sgpuutil.o benchmarklaunchbox
 
 clobber:
 	clean

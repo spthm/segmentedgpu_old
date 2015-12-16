@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -28,7 +28,7 @@
 #include "kernels/scan.cuh"
 #include "kernels/reduce.cuh"
 
-using namespace mgpu;
+using namespace sgpu;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -41,22 +41,22 @@ void BenchmarkScan(int count, int numIt, typename Op::result_type identity,
 #endif
 
 	typedef typename Op::result_type T;
-	MGPU_MEM(T) inputDevice = //context.GenRandom<T>(count, 0, 10);
+	SGPU_MEM(T) inputDevice = //context.GenRandom<T>(count, 0, 10);
 		context.Fill<T>(count, 1);
-	MGPU_MEM(T) resultDevice = context.Malloc<T>(count);
-		
-	// Benchmark MGPU
+	SGPU_MEM(T) resultDevice = context.Malloc<T>(count);
+
+	// Benchmark SGPU
 	context.Start();
 	for(int it = 0; it < numIt; ++it)
-		Scan<MgpuScanTypeExc>(inputDevice->get(), count, 
+		Scan<SgpuScanTypeExc>(inputDevice->get(), count,
 			identity, op, (T*)0, (T*)0, resultDevice->get(), context);
-	double mgpuElapsed = context.Split();
-	
+	double sgpuElapsed = context.Split();
+
 	double bytes = (2 * sizeof(T) + sizeof(T)) * count;
-	double mgpuThroughput = (double)count * numIt / mgpuElapsed;
-	double mgpuBandwidth = bytes * numIt / mgpuElapsed;
+	double sgpuThroughput = (double)count * numIt / sgpuElapsed;
+	double sgpuBandwidth = bytes * numIt / sgpuElapsed;
 	printf("%s: %9.3lf M/s  %7.3lf GB/s\n", FormatInteger(count).c_str(),
-		mgpuThroughput / 1.0e6, mgpuBandwidth / 1.0e9);
+		sgpuThroughput / 1.0e6, sgpuBandwidth / 1.0e9);
 
 	// Verify the results again the host calculation.
 	std::vector<T> host;
@@ -84,10 +84,10 @@ void BenchmarkMaxReduce(int count, int numIt, CudaContext& context) {
 #endif
 
 	typedef typename Op::first_argument_type T;
-	MGPU_MEM(T) data = context.GenRandom<T>(count, 0, count);
-	MGPU_MEM(T) result = context.Malloc<T>(1);
+	SGPU_MEM(T) data = context.GenRandom<T>(count, 0, count);
+	SGPU_MEM(T) result = context.Malloc<T>(1);
 
-	// Benchmark MGPU
+	// Benchmark SGPU
 	context.Start();
 	for(int it = 0; it < numIt; ++it)
 		Reduce(data->get(), count, (T)0, Op(), result->get(), (T*)0, context);
@@ -97,15 +97,15 @@ void BenchmarkMaxReduce(int count, int numIt, CudaContext& context) {
 	result->ToHost(&resultHost, 1);
 
 	double bytes = count * sizeof(T);
-	double mgpuThroughput = (double)count * numIt / elapsed;
-	double mgpuBandwidth = bytes * numIt / elapsed;
+	double sgpuThroughput = (double)count * numIt / elapsed;
+	double sgpuBandwidth = bytes * numIt / elapsed;
 
-	printf("%s: %9.3lf M/s  %7.3lf GB/s\n", 
-		FormatInteger(count).c_str(), mgpuThroughput / 1.0e6,
-		mgpuBandwidth / 1.0e9);
+	printf("%s: %9.3lf M/s  %7.3lf GB/s\n",
+		FormatInteger(count).c_str(), sgpuThroughput / 1.0e6,
+		sgpuBandwidth / 1.0e9);
 }
 
-const int Tests[][2] = { 
+const int Tests[][2] = {
 	{ 10000, 1000 },
 	{ 50000, 1000 },
 	{ 100000, 1000 },
@@ -125,33 +125,33 @@ int main(int argc, char** argv) {
 
 	typedef int T1;
 	typedef int64 T2;
-	
-	{	
-		typedef mgpu::plus<T1> Op1;
-		typedef mgpu::plus<T2> Op2;
+
+	{
+		typedef sgpu::plus<T1> Op1;
+		typedef sgpu::plus<T2> Op2;
 
 		printf("Benchmarking scan on type %s\n", TypeIdName<T1>());
 		for(int test = 0; test < NumTests; ++test)
 			BenchmarkScan<Op1>(Tests[test][0], Tests[test][1], (T1)0, Op1(),
 				*context);
-	
+
 		printf("\nBenchmarking scan on type %s\n", TypeIdName<T2>());
 		for(int test = 0; test < NumTests; ++test)
 			BenchmarkScan<Op2>(Tests[test][0], Tests[test][1], (T2)0, Op2(),
 				*context);
 	}
 	{
-		typedef mgpu::maximum<T1> Op1;
-		typedef mgpu::maximum<T2> Op2;
+		typedef sgpu::maximum<T1> Op1;
+		typedef sgpu::maximum<T2> Op2;
 
 		printf("\nBenchmarking max-reduce on type %s\n", TypeIdName<T1>());
 		for(int test = 0; test < NumTests; ++test)
 			BenchmarkMaxReduce<Op1>(Tests[test][0], Tests[test][1], *context);
-	
+
 		printf("\nBenchmarking max-reduce on type %s\n", TypeIdName<T2>());
 		for(int test = 0; test < NumTests; ++test)
 			BenchmarkMaxReduce<Op2>(Tests[test][0], Tests[test][1], *context);
 	}
-	
+
 	return 0;
-} 
+}

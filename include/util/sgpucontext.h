@@ -2,14 +2,14 @@
 
 #include "util/util.h"
 #include "util/format.h"
-#include "mgpualloc.h"
+#include "sgpualloc.h"
 #include <cuda.h>
 
-namespace mgpu {
+namespace sgpu {
 
 
 #ifdef _DEBUG
-#define MGPU_SYNC_CHECK(s) {												\
+#define SGPU_SYNC_CHECK(s) {												\
 	cudaError_t error = cudaDeviceSynchronize();							\
 	if(cudaSuccess != error) {												\
 		printf("CUDA ERROR %d %s\n%s:%d.\n%s\n",							\
@@ -18,7 +18,7 @@ namespace mgpu {
 	}																		\
 }
 #else
-#define MGPU_SYNC_CHECK(s)
+#define SGPU_SYNC_CHECK(s)
 #endif
 
 template<typename T>
@@ -33,7 +33,7 @@ void copyDtoD(T* dest, const T* source, int count, cudaStream_t stream = 0) {
 template<typename T>
 void copyDtoH(std::vector<T>& dest, const T* source, int count) {
 	dest.resize(count);
-	if(count) 
+	if(count)
 		copyDtoH(&dest[0], source, count);
 }
 
@@ -69,12 +69,12 @@ public:
 
 
 ////////////////////////////////////////////////////////////////////////////////
-// CudaEvent and CudaTimer. 
+// CudaEvent and CudaTimer.
 // Exception-safe wrappers around cudaEvent_t.
 
 class CudaEvent : public noncopyable {
 public:
-	CudaEvent() { 
+	CudaEvent() {
 		cudaEventCreate(&_event);
 	}
 	explicit CudaEvent(int flags) {
@@ -134,7 +134,7 @@ private:
 
 ////////////////////////////////////////////////////////////////////////////////
 // CudaDeviceMem
-// Exception-safe CUDA device memory container. Use the MGPU_MEM(T) macro for
+// Exception-safe CUDA device memory container. Use the SGPU_MEM(T) macro for
 // the type of the reference-counting container.
 // CudaDeviceMem AddRefs the allocator that returned the memory, releasing the
 // pointer when the object is destroyed.
@@ -175,12 +175,12 @@ private:
 	CudaDeviceMem(CudaAlloc* alloc) : _p(0), _size(0), _alloc(alloc) { }
 
 	AllocPtr _alloc;
-	T* _p; 
+	T* _p;
 	size_t _size;
 };
 
 typedef intrusive_ptr<CudaAlloc> AllocPtr;
-#define MGPU_MEM(type) mgpu::intrusive_ptr< mgpu::CudaDeviceMem< type > >  
+#define SGPU_MEM(type) sgpu::intrusive_ptr< sgpu::CudaDeviceMem< type > >
 
 ////////////////////////////////////////////////////////////////////////////////
 // CudaMemSupport
@@ -195,38 +195,38 @@ public:
 	CudaDevice& Device() { return _alloc->Device(); }
 
 	// Swap out the associated allocator.
-	void SetAllocator(CudaAlloc* alloc) { 
+	void SetAllocator(CudaAlloc* alloc) {
 		assert(alloc->Device().Ordinal() == _alloc->Device().Ordinal());
 		_alloc.reset(alloc);
 	}
 
 	// Access the associated allocator.
-	CudaAlloc* GetAllocator() { return _alloc.get(); }	
+	CudaAlloc* GetAllocator() { return _alloc.get(); }
 
 	// Support for creating arrays.
 	template<typename T>
-	MGPU_MEM(T) Malloc(size_t count);
+	SGPU_MEM(T) Malloc(size_t count);
 
 	template<typename T>
-	MGPU_MEM(T) Malloc(const T* data, size_t count);
+	SGPU_MEM(T) Malloc(const T* data, size_t count);
 
 	template<typename T>
-	MGPU_MEM(T) Malloc(const std::vector<T>& data);
+	SGPU_MEM(T) Malloc(const std::vector<T>& data);
 
 	template<typename T>
-	MGPU_MEM(T) Fill(size_t count, T fill);
+	SGPU_MEM(T) Fill(size_t count, T fill);
 
 	template<typename T>
-	MGPU_MEM(T) FillAscending(size_t count, T first, T step);
+	SGPU_MEM(T) FillAscending(size_t count, T first, T step);
 
 	template<typename T>
-	MGPU_MEM(T) GenRandom(size_t count, T min, T max);
+	SGPU_MEM(T) GenRandom(size_t count, T min, T max);
 
 	template<typename T>
-	MGPU_MEM(T) SortRandom(size_t count, T min, T max);
+	SGPU_MEM(T) SortRandom(size_t count, T min, T max);
 
 	template<typename T, typename Func>
-	MGPU_MEM(T) GenFunc(size_t count, Func f);
+	SGPU_MEM(T) GenFunc(size_t count, Func f);
 
 protected:
 	CudaMemSupport() { }
@@ -236,7 +236,7 @@ protected:
 ////////////////////////////////////////////////////////////////////////////////
 
 class CudaContext;
-typedef mgpu::intrusive_ptr<CudaContext> ContextPtr;
+typedef sgpu::intrusive_ptr<CudaContext> ContextPtr;
 
 // Create a context on the default stream (0).
 ContextPtr CreateCudaDevice(int ordinal);
@@ -244,7 +244,7 @@ ContextPtr CreateCudaDevice(int argc, char** argv, bool printInfo = false);
 
 // Create a context on a new stream.
 ContextPtr CreateCudaDeviceStream(int ordinal);
-ContextPtr CreateCudaDeviceStream(int argc, char** argv, 
+ContextPtr CreateCudaDeviceStream(int argc, char** argv,
 	bool printInfo = false);
 
 // Create a context and attach to an existing stream.
@@ -258,7 +258,7 @@ class CudaContext : public CudaMemSupport {
 
 	friend ContextPtr CreateCudaDevice(int ordinal);
 	friend ContextPtr CreateCudaDeviceStream(int ordinal);
-	friend ContextPtr CreateCudaDeviceAttachStream(int ordinal, 
+	friend ContextPtr CreateCudaDeviceAttachStream(int ordinal,
 		cudaStream_t stream);
 public:
 	static CudaContext& StandardContext(int ordinal = -1);
@@ -317,9 +317,9 @@ cudaError_t CudaDeviceMem<T>::ToDevice(T* data, size_t count) const {
 	return ToDevice(0, sizeof(T) * count, data);
 }
 template<typename T>
-cudaError_t CudaDeviceMem<T>::ToDevice(size_t srcOffset, size_t bytes, 
+cudaError_t CudaDeviceMem<T>::ToDevice(size_t srcOffset, size_t bytes,
 	void* data) const {
-	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes, 
+	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes,
 		cudaMemcpyDeviceToDevice);
 	if(cudaSuccess != error) {
 		printf("CudaDeviceMem::ToDevice copy error %d\n", error);
@@ -344,7 +344,7 @@ cudaError_t CudaDeviceMem<T>::ToHost(std::vector<T>& data) const {
 	return ToHost(data, _size);
 }
 template<typename T>
-cudaError_t CudaDeviceMem<T>::ToHost(size_t srcOffset, size_t bytes, 
+cudaError_t CudaDeviceMem<T>::ToHost(size_t srcOffset, size_t bytes,
 	void* data) const {
 
 	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes,
@@ -400,12 +400,12 @@ CudaDeviceMem<T>::~CudaDeviceMem() {
 // CudaMemSupport method implementations
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::Malloc(size_t count) {
-	MGPU_MEM(T) mem(new CudaDeviceMem<T>(_alloc.get()));
+SGPU_MEM(T) CudaMemSupport::Malloc(size_t count) {
+	SGPU_MEM(T) mem(new CudaDeviceMem<T>(_alloc.get()));
 	mem->_size = count;
 	cudaError_t error = _alloc->Malloc(sizeof(T) * count, (void**)&mem->_p);
 	if(cudaSuccess != error) {
-		printf("cudaMalloc error %d\n", error);		
+		printf("cudaMalloc error %d\n", error);
 		exit(0);
 		throw CudaException(cudaErrorMemoryAllocation);
 	}
@@ -418,27 +418,27 @@ MGPU_MEM(T) CudaMemSupport::Malloc(size_t count) {
 }
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::Malloc(const T* data, size_t count) {
-	MGPU_MEM(T) mem = Malloc<T>(count);
+SGPU_MEM(T) CudaMemSupport::Malloc(const T* data, size_t count) {
+	SGPU_MEM(T) mem = Malloc<T>(count);
 	mem->FromHost(data, count);
 	return mem;
 }
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::Malloc(const std::vector<T>& data) {
-	MGPU_MEM(T) mem = Malloc<T>(data.size());
+SGPU_MEM(T) CudaMemSupport::Malloc(const std::vector<T>& data) {
+	SGPU_MEM(T) mem = Malloc<T>(data.size());
 	if(data.size()) mem->FromHost(&data[0], data.size());
 	return mem;
 }
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::Fill(size_t count, T fill) {
+SGPU_MEM(T) CudaMemSupport::Fill(size_t count, T fill) {
 	std::vector<T> data(count, fill);
 	return Malloc(data);
 }
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::FillAscending(size_t count, T first, T step) {
+SGPU_MEM(T) CudaMemSupport::FillAscending(size_t count, T first, T step) {
 	std::vector<T> data(count);
 	for(size_t i = 0; i < count; ++i)
 		data[i] = first + i * step;
@@ -446,7 +446,7 @@ MGPU_MEM(T) CudaMemSupport::FillAscending(size_t count, T first, T step) {
 }
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::GenRandom(size_t count, T min, T max) {
+SGPU_MEM(T) CudaMemSupport::GenRandom(size_t count, T min, T max) {
 	std::vector<T> data(count);
 	for(size_t i = 0; i < count; ++i)
 		data[i] = Rand(min, max);
@@ -454,7 +454,7 @@ MGPU_MEM(T) CudaMemSupport::GenRandom(size_t count, T min, T max) {
 }
 
 template<typename T>
-MGPU_MEM(T) CudaMemSupport::SortRandom(size_t count, T min, T max) {
+SGPU_MEM(T) CudaMemSupport::SortRandom(size_t count, T min, T max) {
 	std::vector<T> data(count);
 	for(size_t i = 0; i < count; ++i)
 		data[i] = Rand(min, max);
@@ -463,12 +463,12 @@ MGPU_MEM(T) CudaMemSupport::SortRandom(size_t count, T min, T max) {
 }
 
 template<typename T, typename Func>
-MGPU_MEM(T) CudaMemSupport::GenFunc(size_t count, Func f) {
+SGPU_MEM(T) CudaMemSupport::GenFunc(size_t count, Func f) {
 	std::vector<T> data(count);
 	for(size_t i = 0; i < count; ++i)
 		data[i] = f(i);
 
-	MGPU_MEM(T) mem = Malloc<T>(count);
+	SGPU_MEM(T) mem = Malloc<T>(count);
 	mem->FromHost(data, count);
 	return mem;
 }
@@ -490,7 +490,7 @@ std::string FormatArrayOp(const CudaDeviceMem<T>& mem, Op op, int numCols) {
 }
 
 template<typename T>
-void PrintArray(const CudaDeviceMem<T>& mem, int count, const char* format, 
+void PrintArray(const CudaDeviceMem<T>& mem, int count, const char* format,
 	int numCols) {
 	std::string s = FormatArrayOp(mem, count, FormatOpPrintf(format), numCols);
 	printf("%s", s.c_str());
@@ -510,4 +510,4 @@ void PrintArrayOp(const CudaDeviceMem<T>& mem, Op op, int numCols) {
 ////////////////////////////////////////////////////////////////////////////////
 
 
-} // namespace mgpu
+} // namespace sgpu

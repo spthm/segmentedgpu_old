@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,11 +34,11 @@
 
 #pragma once
 
-#include "../mgpuhost.cuh"
+#include "../sgpuhost.cuh"
 #include "../device/ctamerge.cuh"
 #include "../kernels/search.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // KernelMerge
@@ -46,12 +46,12 @@ namespace mgpu {
 template<typename Tuning, bool HasValues, bool LoadExtended, typename KeysIt1,
 	typename KeysIt2, typename KeysIt3, typename ValsIt1, typename ValsIt2,
 	typename ValsIt3, typename Comp>
-MGPU_LAUNCH_BOUNDS void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
+SGPU_LAUNCH_BOUNDS void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	int aCount, KeysIt2 bKeys_global, ValsIt2 bVals_global, int bCount,
 	const int* mp_global, int coop, KeysIt3 keys_global, ValsIt3 vals_global,
 	Comp comp) {
 
-	typedef MGPU_LAUNCH_PARAMS Params;
+	typedef SGPU_LAUNCH_PARAMS Params;
 	typedef typename std::iterator_traits<KeysIt1>::value_type KeyType;
 	typedef typename std::iterator_traits<ValsIt1>::value_type ValType;
 
@@ -67,11 +67,11 @@ MGPU_LAUNCH_BOUNDS void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	int tid = threadIdx.x;
 	int block = blockIdx.x;
 
-	int4 range = ComputeMergeRange(aCount, bCount, block, coop, NT * VT, 
+	int4 range = ComputeMergeRange(aCount, bCount, block, coop, NT * VT,
 		mp_global);
 
-	DeviceMerge<NT, VT, HasValues, LoadExtended>(aKeys_global, aVals_global, 
-		aCount, bKeys_global, bVals_global, bCount, tid, block, range, 
+	DeviceMerge<NT, VT, HasValues, LoadExtended>(aKeys_global, aVals_global,
+		aCount, bKeys_global, bVals_global, bCount, tid, block, range,
 		shared.keys, shared.indices, keys_global, vals_global, comp);
 }
 
@@ -79,9 +79,9 @@ MGPU_LAUNCH_BOUNDS void KernelMerge(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 // MergeKeys
 
 template<typename KeysIt1, typename KeysIt2, typename KeysIt3, typename Comp>
-MGPU_HOST void MergeKeys(KeysIt1 aKeys_global, int aCount, KeysIt2 bKeys_global,
+SGPU_HOST void MergeKeys(KeysIt1 aKeys_global, int aCount, KeysIt2 bKeys_global,
 	int bCount, KeysIt3 keys_global, Comp comp, CudaContext& context) {
-	
+
 	typedef typename std::iterator_traits<KeysIt1>::value_type T;
 	typedef LaunchBoxVT<
 		128, 23, 0,
@@ -91,21 +91,21 @@ MGPU_HOST void MergeKeys(KeysIt1 aKeys_global, int aCount, KeysIt2 bKeys_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	const int NV = launch.x * launch.y;
-	MGPU_MEM(int) partitionsDevice = MergePathPartitions<MgpuBoundsLower>(
+	SGPU_MEM(int) partitionsDevice = MergePathPartitions<SgpuBoundsLower>(
 		aKeys_global, aCount, bKeys_global, bCount, NV, 0, comp, context);
 
-	int numBlocks = MGPU_DIV_UP(aCount + bCount, NV);
+	int numBlocks = SGPU_DIV_UP(aCount + bCount, NV);
 	KernelMerge<Tuning, false, true>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(aKeys_global, 
-		(const int*)0, aCount, bKeys_global, (const int*)0, bCount, 
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(aKeys_global,
+		(const int*)0, aCount, bKeys_global, (const int*)0, bCount,
 		partitionsDevice->get(), 0, keys_global, (int*)0, comp);
-	MGPU_SYNC_CHECK("KernelMerge");
+	SGPU_SYNC_CHECK("KernelMerge");
 }
 template<typename KeysIt1, typename KeysIt2, typename KeysIt3>
-MGPU_HOST void MergeKeys(KeysIt1 aKeys_global, int aCount, KeysIt2 bKeys_global,
+SGPU_HOST void MergeKeys(KeysIt1 aKeys_global, int aCount, KeysIt2 bKeys_global,
 	int bCount, KeysIt3 keys_global, CudaContext& context) {
 
-	typedef mgpu::less<typename std::iterator_traits<KeysIt1>::value_type> Comp;
+	typedef sgpu::less<typename std::iterator_traits<KeysIt1>::value_type> Comp;
 	return MergeKeys(aKeys_global, aCount, bKeys_global, bCount, keys_global,
 		Comp(), context);
 }
@@ -115,7 +115,7 @@ MGPU_HOST void MergeKeys(KeysIt1 aKeys_global, int aCount, KeysIt2 bKeys_global,
 
 template<typename KeysIt1, typename KeysIt2, typename KeysIt3, typename ValsIt1,
 	typename ValsIt2, typename ValsIt3, typename Comp>
-MGPU_HOST void MergePairs(KeysIt1 aKeys_global, ValsIt1 aVals_global, 
+SGPU_HOST void MergePairs(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	int aCount, KeysIt2 bKeys_global, ValsIt2 bVals_global, int bCount,
 	KeysIt3 keys_global, ValsIt3 vals_global, Comp comp, CudaContext& context) {
 
@@ -128,25 +128,25 @@ MGPU_HOST void MergePairs(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	const int NV = launch.x * launch.y;
-	MGPU_MEM(int) partitionsDevice = MergePathPartitions<MgpuBoundsLower>(
+	SGPU_MEM(int) partitionsDevice = MergePathPartitions<SgpuBoundsLower>(
 		aKeys_global, aCount, bKeys_global, bCount, NV, 0, comp, context);
 
-	int numBlocks = MGPU_DIV_UP(aCount + bCount, NV);
+	int numBlocks = SGPU_DIV_UP(aCount + bCount, NV);
 	KernelMerge<Tuning, true, false>
 		<<<numBlocks, launch.x, 0, context.Stream()>>>(aKeys_global,
-		aVals_global, aCount, bKeys_global, bVals_global, bCount, 
+		aVals_global, aCount, bKeys_global, bVals_global, bCount,
 		partitionsDevice->get(), 0, keys_global, vals_global, comp);
-	MGPU_SYNC_CHECK("KernelMerge");
+	SGPU_SYNC_CHECK("KernelMerge");
 }
 template<typename KeysIt1, typename KeysIt2, typename KeysIt3, typename ValsIt1,
 	typename ValsIt2, typename ValsIt3>
-MGPU_HOST void MergePairs(KeysIt1 aKeys_global, ValsIt1 aVals_global, 
+SGPU_HOST void MergePairs(KeysIt1 aKeys_global, ValsIt1 aVals_global,
 	int aCount, KeysIt2 bKeys_global, ValsIt2 bVals_global, int bCount,
 	KeysIt3 keys_global, ValsIt3 vals_global, CudaContext& context) {
 
-	typedef mgpu::less<typename std::iterator_traits<KeysIt1>::value_type> Comp;
-	return MergePairs(aKeys_global, aVals_global, aCount, bKeys_global, 
+	typedef sgpu::less<typename std::iterator_traits<KeysIt1>::value_type> Comp;
+	return MergePairs(aKeys_global, aVals_global, aCount, bKeys_global,
 		bVals_global, bCount, keys_global, vals_global, Comp(), context);
 }
 
-} // namespace mgpu
+} // namespace sgpu

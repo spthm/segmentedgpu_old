@@ -16,10 +16,10 @@
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="benchmarksegsort.cu" />
-    <CudaCompile Include="..\src\mgpucontext.cu" />
+    <CudaCompile Include="..\src\sgpucontext.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\src\mgpuutil.cpp">
+    <ClCompile Include="..\src\sgpuutil.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

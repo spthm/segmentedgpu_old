@@ -5,23 +5,23 @@ all: build
 
 build: benchmarksegsort
 
-benchmarksegsort.o: benchmarksegsort.cu 
+benchmarksegsort.o: benchmarksegsort.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpucontext.o: ../src/mgpucontext.cu
+sgpucontext.o: ../src/sgpucontext.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-mgpuutil.o: ../src/mgpuutil.cpp
+sgpuutil.o: ../src/sgpuutil.cpp
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-benchmarksegsort: benchmarksegsort.o mgpucontext.o mgpuutil.o
+benchmarksegsort: benchmarksegsort.o sgpucontext.o sgpuutil.o
 	nvcc $(NVCCFLAGS) -o $@ $+
 
 run: build
 	./benchmarksegsort
 
 clean:
-	rm -f benchmarksegsort.o mgpucontext.o mgpuutil.o benchmarksegsort
+	rm -f benchmarksegsort.o sgpucontext.o sgpuutil.o benchmarksegsort
 
 clobber:
 	clean

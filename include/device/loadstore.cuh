@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,28 +34,28 @@
 
 #pragma once
 
-#include "../mgpudevice.cuh"
+#include "../sgpudevice.cuh"
 #include "../device/deviceutil.cuh"
 #include "../device/intrinsics.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // Cooperative load functions.
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceSharedToReg(InputIt data, int tid, T* reg,
+SGPU_DEVICE void DeviceSharedToReg(InputIt data, int tid, T* reg,
 	bool sync) {
 
 	#pragma unroll
 	for(int i = 0; i < VT; ++i)
 		reg[i] = data[NT * i + tid];
-	
+
 	if(sync) __syncthreads();
 }
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToRegPred(int count, InputIt data, int tid, 
+SGPU_DEVICE void DeviceGlobalToRegPred(int count, InputIt data, int tid,
 	T* reg, bool sync) {
 
 	// TODO: Attempt to issue 4 loads at a time.
@@ -68,7 +68,7 @@ MGPU_DEVICE void DeviceGlobalToRegPred(int count, InputIt data, int tid,
 }
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToReg(int count, InputIt data, int tid, 
+SGPU_DEVICE void DeviceGlobalToReg(int count, InputIt data, int tid,
 	T* reg, bool sync) {
 
 	if(count >= NT * VT) {
@@ -80,7 +80,7 @@ MGPU_DEVICE void DeviceGlobalToReg(int count, InputIt data, int tid,
 	if(sync) __syncthreads();
 }
 template<int NT, int VT0, int VT1, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToReg2(int count, InputIt data, int tid, 
+SGPU_DEVICE void DeviceGlobalToReg2(int count, InputIt data, int tid,
 	T* reg, bool sync) {
 
 	DeviceGlobalToReg<NT, VT0>(count, data, tid, reg, false);
@@ -93,7 +93,7 @@ MGPU_DEVICE void DeviceGlobalToReg2(int count, InputIt data, int tid,
 }
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToRegDefault(int count, InputIt data, int tid,
+SGPU_DEVICE void DeviceGlobalToRegDefault(int count, InputIt data, int tid,
 	T* reg, T init, bool sync) {
 
 	if(count >= NT * VT) {
@@ -111,7 +111,7 @@ MGPU_DEVICE void DeviceGlobalToRegDefault(int count, InputIt data, int tid,
 	if(sync) __syncthreads();
 }
 template<int NT, int VT0, int VT1, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToRegDefault2(int count, InputIt data, int tid,
+SGPU_DEVICE void DeviceGlobalToRegDefault2(int count, InputIt data, int tid,
 	T* reg, T init, bool sync) {
 
 	DeviceGlobalToRegDefault<NT, VT0>(count, data, tid, reg, init, false);
@@ -127,7 +127,7 @@ MGPU_DEVICE void DeviceGlobalToRegDefault2(int count, InputIt data, int tid,
 ////////////////////////////////////////////////////////////////////////////////
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToThread(int count, InputIt data, int tid, 
+SGPU_DEVICE void DeviceGlobalToThread(int count, InputIt data, int tid,
 	T* reg) {
 
 	data += VT * tid;
@@ -144,7 +144,7 @@ MGPU_DEVICE void DeviceGlobalToThread(int count, InputIt data, int tid,
 }
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToThreadDefault(int count, InputIt data, int tid, 
+SGPU_DEVICE void DeviceGlobalToThreadDefault(int count, InputIt data, int tid,
 	T* reg, T init) {
 
 	data += VT * tid;
@@ -165,9 +165,9 @@ MGPU_DEVICE void DeviceGlobalToThreadDefault(int count, InputIt data, int tid,
 // Cooperative store functions.
 
 template<int NT, int VT, typename OutputIt, typename T>
-MGPU_DEVICE void DeviceRegToShared(const T* reg, int tid,
+SGPU_DEVICE void DeviceRegToShared(const T* reg, int tid,
 	OutputIt dest, bool sync) {
-	
+
 	typedef typename std::iterator_traits<OutputIt>::value_type T2;
 	#pragma unroll
 	for(int i = 0; i < VT; ++i)
@@ -177,7 +177,7 @@ MGPU_DEVICE void DeviceRegToShared(const T* reg, int tid,
 }
 
 template<int NT, int VT, typename OutputIt, typename T>
-MGPU_DEVICE void DeviceRegToGlobal(int count, const T* reg, int tid,
+SGPU_DEVICE void DeviceRegToGlobal(int count, const T* reg, int tid,
 	OutputIt dest, bool sync) {
 
 	#pragma unroll
@@ -196,7 +196,7 @@ MGPU_DEVICE void DeviceRegToGlobal(int count, const T* reg, int tid,
 // unnecessary comparison logic.
 
 template<int NT, int VT, typename InputIt, typename OutputIt>
-MGPU_DEVICE void DeviceMemToMem4(int count, InputIt source, int tid,
+SGPU_DEVICE void DeviceMemToMem4(int count, InputIt source, int tid,
 	OutputIt dest, bool sync) {
 
 	typedef typename std::iterator_traits<InputIt>::value_type T;
@@ -227,7 +227,7 @@ MGPU_DEVICE void DeviceMemToMem4(int count, InputIt source, int tid,
 	if(sync) __syncthreads();
 }
 template<int NT, typename InputIt, typename OutputIt>
-MGPU_DEVICE void DeviceMemToMemLoop(int count, InputIt source, int tid, 
+SGPU_DEVICE void DeviceMemToMemLoop(int count, InputIt source, int tid,
 	OutputIt dest, bool sync) {
 
 	for(int i = 0; i < count; i += 4 * NT)
@@ -242,7 +242,7 @@ MGPU_DEVICE void DeviceMemToMemLoop(int count, InputIt source, int tid,
 // to transfer NT * VT elements.
 
 template<int NT, int VT, typename T, typename OutputIt>
-MGPU_DEVICE void DeviceSharedToGlobal(int count, const T* source, int tid, 
+SGPU_DEVICE void DeviceSharedToGlobal(int count, const T* source, int tid,
 	OutputIt dest, bool sync) {
 
 	typedef typename std::iterator_traits<OutputIt>::value_type T2;
@@ -255,7 +255,7 @@ MGPU_DEVICE void DeviceSharedToGlobal(int count, const T* source, int tid,
 }
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToShared(int count, InputIt source, int tid,
+SGPU_DEVICE void DeviceGlobalToShared(int count, InputIt source, int tid,
 	T* dest, bool sync) {
 
 	T reg[VT];
@@ -264,7 +264,7 @@ MGPU_DEVICE void DeviceGlobalToShared(int count, InputIt source, int tid,
 }
 
 template<int NT, int VT0, int VT1, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToShared2(int count, InputIt source, int tid,
+SGPU_DEVICE void DeviceGlobalToShared2(int count, InputIt source, int tid,
 	T* dest, bool sync) {
 
 	T reg[VT1];
@@ -274,7 +274,7 @@ MGPU_DEVICE void DeviceGlobalToShared2(int count, InputIt source, int tid,
 
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToSharedDefault(int count, InputIt source, int tid,
+SGPU_DEVICE void DeviceGlobalToSharedDefault(int count, InputIt source, int tid,
 	T* dest, T init, bool sync) {
 
 	T reg[VT];
@@ -283,7 +283,7 @@ MGPU_DEVICE void DeviceGlobalToSharedDefault(int count, InputIt source, int tid,
 }
 
 template<int NT, int VT0, int VT1, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToSharedDefault2(int count, InputIt data, int tid, 
+SGPU_DEVICE void DeviceGlobalToSharedDefault2(int count, InputIt data, int tid,
 	T* dest, T init, bool sync) {
 
 	T reg[VT1];
@@ -295,10 +295,10 @@ MGPU_DEVICE void DeviceGlobalToSharedDefault2(int count, InputIt data, int tid,
 ////////////////////////////////////////////////////////////////////////////////
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGlobalToSharedLoop(int count, InputIt source, int tid,
+SGPU_DEVICE void DeviceGlobalToSharedLoop(int count, InputIt source, int tid,
 	T* dest, bool sync) {
 
-	const int Granularity = MGPU_MIN(VT, 3);
+	const int Granularity = SGPU_MIN(VT, 3);
 	DeviceGlobalToShared<NT, Granularity>(count, source, tid, dest, false);
 
 	int offset = Granularity * NT;
@@ -315,19 +315,19 @@ MGPU_DEVICE void DeviceGlobalToSharedLoop(int count, InputIt source, int tid,
 		#pragma unroll
 		for(int i = 0; i < Granularity; ++i) {
 			int index = NT * i + tid;
-			if(index < count) 
+			if(index < count)
 				reg[i] = source[NT * i];
 		}
 		DeviceRegToShared<NT, Granularity>(reg, tid, dest, false);
 		source += Granularity * NT;
 		dest += Granularity * NT;
-		count -= Granularity * NT;		
+		count -= Granularity * NT;
 	}
 	if(sync) __syncthreads();*/
 }
 
 template<int NT, int VT, typename InputIt, typename OutputIt>
-MGPU_DEVICE void DeviceGlobalToGlobal(int count, InputIt source, int tid, 
+SGPU_DEVICE void DeviceGlobalToGlobal(int count, InputIt source, int tid,
 	OutputIt dest, bool sync) {
 
 	typedef typename std::iterator_traits<OutputIt>::value_type T;
@@ -341,7 +341,7 @@ MGPU_DEVICE void DeviceGlobalToGlobal(int count, InputIt source, int tid,
 // using only NT * VT / 2 elements of shared memory.
 
 template<int NT, int VT, typename T>
-MGPU_DEVICE void HalfSmemTranspose(const T* x, int tid, T* shared, T* y) {
+SGPU_DEVICE void HalfSmemTranspose(const T* x, int tid, T* shared, T* y) {
 
 	// Transpose the first half values (tid < NT / 2)
 	#pragma unroll
@@ -376,7 +376,7 @@ MGPU_DEVICE void HalfSmemTranspose(const T* x, int tid, T* shared, T* y) {
 // Gather/scatter functions
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGather(int count, InputIt data, int indices[VT], 
+SGPU_DEVICE void DeviceGather(int count, InputIt data, int indices[VT],
 	int tid, T* reg, bool sync) {
 
 	if(count >= NT * VT) {
@@ -395,7 +395,7 @@ MGPU_DEVICE void DeviceGather(int count, InputIt data, int indices[VT],
 }
 
 template<int NT, int VT, typename InputIt, typename T>
-MGPU_DEVICE void DeviceGatherDefault(int count, InputIt data, int indices[VT], 
+SGPU_DEVICE void DeviceGatherDefault(int count, InputIt data, int indices[VT],
 	int tid, T* reg, T identity, bool sync) {
 
 	if(count >= NT * VT) {
@@ -413,7 +413,7 @@ MGPU_DEVICE void DeviceGatherDefault(int count, InputIt data, int indices[VT],
 }
 
 template<int NT, int VT, typename T, typename OutputIt>
-MGPU_DEVICE void DeviceScatter(int count, const T* reg, int tid, 
+SGPU_DEVICE void DeviceScatter(int count, const T* reg, int tid,
 	int indices[VT], OutputIt data, bool sync) {
 
 	if(count >= NT * VT) {
@@ -435,7 +435,7 @@ MGPU_DEVICE void DeviceScatter(int count, const T* reg, int tid,
 // Cooperative transpose functions (strided to thread order)
 
 template<int VT, typename T>
-MGPU_DEVICE void DeviceThreadToShared(const T* threadReg, int tid, T* shared,
+SGPU_DEVICE void DeviceThreadToShared(const T* threadReg, int tid, T* shared,
 	bool sync) {
 
 	if(1 & VT) {
@@ -455,7 +455,7 @@ MGPU_DEVICE void DeviceThreadToShared(const T* threadReg, int tid, T* shared,
 }
 
 template<int VT, typename T>
-MGPU_DEVICE void DeviceSharedToThread(const T* shared, int tid, T* threadReg,
+SGPU_DEVICE void DeviceSharedToThread(const T* shared, int tid, T* threadReg,
 	bool sync) {
 
 	if(1 & VT) {
@@ -479,7 +479,7 @@ MGPU_DEVICE void DeviceSharedToThread(const T* shared, int tid, T* threadReg,
 // statement.
 
 template<int NT, int VT0, int VT1, typename T>
-MGPU_DEVICE void DeviceLoad2ToReg(const T* a_global, int aCount, 
+SGPU_DEVICE void DeviceLoad2ToReg(const T* a_global, int aCount,
 	const T* b_global, int bCount, int tid, T* reg, bool sync) {
 
 	int b0 = b_global - a_global - aCount;
@@ -507,7 +507,7 @@ MGPU_DEVICE void DeviceLoad2ToReg(const T* a_global, int aCount,
 }
 
 template<int NT, int VT0, int VT1, typename T>
-MGPU_DEVICE void DeviceLoad2ToShared(const T* a_global, int aCount,
+SGPU_DEVICE void DeviceLoad2ToShared(const T* a_global, int aCount,
 	const T* b_global, int bCount, int tid, T* shared, bool sync) {
 
 	T reg[VT1];
@@ -521,7 +521,7 @@ MGPU_DEVICE void DeviceLoad2ToShared(const T* a_global, int aCount,
 
 template<int NT, int VT0, int VT1, typename InputIt1, typename InputIt2,
 	typename T>
-MGPU_DEVICE void DeviceLoad2ToReg(InputIt1 a_global, int aCount, 
+SGPU_DEVICE void DeviceLoad2ToReg(InputIt1 a_global, int aCount,
 	InputIt2 b_global, int bCount, int tid, T* reg, bool sync)  {
 
 	b_global -= aCount;
@@ -551,7 +551,7 @@ MGPU_DEVICE void DeviceLoad2ToReg(InputIt1 a_global, int aCount,
 
 template<int NT, int VT0, int VT1, typename InputIt1, typename InputIt2,
 	typename T>
-MGPU_DEVICE void DeviceLoad2ToShared(InputIt1 a_global, int aCount, 
+SGPU_DEVICE void DeviceLoad2ToShared(InputIt1 a_global, int aCount,
 	InputIt2 b_global, int bCount, int tid, T* shared, bool sync) {
 
 	T reg[VT1];
@@ -565,7 +565,7 @@ MGPU_DEVICE void DeviceLoad2ToShared(InputIt1 a_global, int aCount,
 // DeviceGatherGlobalToGlobal
 
 template<int NT, int VT, typename InputIt, typename OutputIt>
-MGPU_DEVICE void DeviceGatherGlobalToGlobal(int count, InputIt data_global,
+SGPU_DEVICE void DeviceGatherGlobalToGlobal(int count, InputIt data_global,
 	const int* indices_shared, int tid, OutputIt dest_global, bool sync) {
 
 	typedef typename std::iterator_traits<InputIt>::value_type ValType;
@@ -590,17 +590,17 @@ MGPU_DEVICE void DeviceGatherGlobalToGlobal(int count, InputIt data_global,
 
 template<int NT, int VT, typename InputIt1, typename InputIt2,
 	typename T>
-MGPU_DEVICE void DeviceTransferMergeValuesReg(int count, InputIt1 a_global, 
-	InputIt2 b_global, int bStart, const int* indices, int tid, 
+SGPU_DEVICE void DeviceTransferMergeValuesReg(int count, InputIt1 a_global,
+	InputIt2 b_global, int bStart, const int* indices, int tid,
 	T* reg, bool sync) {
 
 	b_global -= bStart;
 	if(count >= NT * VT) {
 		#pragma unroll
 		for(int i = 0; i < VT; ++i) {
-			reg[i] = (indices[i] < bStart) ? a_global[indices[i]] : 
+			reg[i] = (indices[i] < bStart) ? a_global[indices[i]] :
 				b_global[indices[i]];
-		}	
+		}
 	} else {
 		#pragma unroll
 		for(int i = 0; i < VT; ++i) {
@@ -608,15 +608,15 @@ MGPU_DEVICE void DeviceTransferMergeValuesReg(int count, InputIt1 a_global,
 			if(index < count)
 				reg[i] = (indices[i] < bStart) ? a_global[indices[i]] :
 					b_global[indices[i]];
-		}	
+		}
 	}
 	if(sync) __syncthreads();
 }
 
 template<int NT, int VT, typename InputIt1, typename InputIt2,
 	typename OutputIt>
-MGPU_DEVICE void DeviceTransferMergeValuesShared(int count, InputIt1 a_global, 
-	InputIt2 b_global, int bStart, const int* indices_shared, int tid, 
+SGPU_DEVICE void DeviceTransferMergeValuesShared(int count, InputIt1 a_global,
+	InputIt2 b_global, int bStart, const int* indices_shared, int tid,
 	OutputIt dest_global, bool sync) {
 
 	int indices[VT];
@@ -624,13 +624,13 @@ MGPU_DEVICE void DeviceTransferMergeValuesShared(int count, InputIt1 a_global,
 
 	typedef typename std::iterator_traits<InputIt1>::value_type ValType;
 	ValType reg[VT];
-	DeviceTransferMergeValuesReg<NT, VT>(count, a_global, b_global, bStart, 
+	DeviceTransferMergeValuesReg<NT, VT>(count, a_global, b_global, bStart,
 		indices, tid, reg, sync);
 	DeviceRegToGlobal<NT, VT>(count, reg, tid, dest_global, sync);
 }
 
 template<int NT, int VT, typename T>
-MGPU_DEVICE void DeviceTransferMergeValuesReg(int count, const T* a_global, 
+SGPU_DEVICE void DeviceTransferMergeValuesReg(int count, const T* a_global,
 	const T* b_global, int bStart, const int* indices, int tid, T* reg,
 	bool sync) {
 
@@ -651,23 +651,23 @@ MGPU_DEVICE void DeviceTransferMergeValuesReg(int count, const T* a_global,
 			if(gather >= bStart) gather += bOffset;
 			if(index < count)
 				reg[i] = a_global[gather];
-		}	
+		}
 	}
 	if(sync) __syncthreads();
 }
 
 template<int NT, int VT, typename T, typename OutputIt>
-MGPU_DEVICE void DeviceTransferMergeValuesShared(int count, const T* a_global, 
-	const T* b_global, int bStart, const int* indices_shared, int tid, 
+SGPU_DEVICE void DeviceTransferMergeValuesShared(int count, const T* a_global,
+	const T* b_global, int bStart, const int* indices_shared, int tid,
 	OutputIt dest_global, bool sync) {
 
 	int indices[VT];
 	DeviceSharedToReg<NT, VT>(indices_shared, tid, indices);
 
 	T reg[VT];
-	DeviceTransferMergeValuesReg<NT, VT>(count, a_global, b_global, bStart, 
+	DeviceTransferMergeValuesReg<NT, VT>(count, a_global, b_global, bStart,
 		indices, tid, reg, sync);
 	DeviceRegToGlobal<NT, VT>(count, reg, tid, dest_global, sync);
 }
 
-} // namespace mgpu
+} // namespace sgpu

@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -32,19 +32,19 @@
  *
  ******************************************************************************/
 
-#include "util/mgpucontext.h"
+#include "util/sgpucontext.h"
 #include "device/launchbox.cuh"
 
-using namespace mgpu;
+using namespace sgpu;
 
-// LaunchBox-specialized kernel Foo uses MGPU_LAUNCH_BOUNDS kernel to control
-// register usage. The typename Tuning is obligatory, and must be chosen for 
-// the MGPU_LAUNCH_BOUNDS and MGPU_LAUNCH_PARAMS macros to work.
+// LaunchBox-specialized kernel Foo uses SGPU_LAUNCH_BOUNDS kernel to control
+// register usage. The typename Tuning is obligatory, and must be chosen for
+// the SGPU_LAUNCH_BOUNDS and SGPU_LAUNCH_PARAMS macros to work.
 template<typename Tuning>
-MGPU_LAUNCH_BOUNDS void Foo() {
-	typedef MGPU_LAUNCH_PARAMS Params;
+SGPU_LAUNCH_BOUNDS void Foo() {
+	typedef SGPU_LAUNCH_PARAMS Params;
 	if(!blockIdx.x && !threadIdx.x)
-		printf("Launch Foo<<<%d, %d>>> with NT=%d VT=%d OCC=%d\n", 
+		printf("Launch Foo<<<%d, %d>>> with NT=%d VT=%d OCC=%d\n",
 			gridDim.x, blockDim.x, Params::NT, Params::VT, Params::OCC);
 }
 
@@ -55,13 +55,13 @@ void LaunchFoo(int count, CudaContext& context) {
 		256, 9, 5,			// sm_30  NT=256, VT=9,  OCC=5
 		256, 15, 3			// sm_35  NT=256, VT=15, OCC=3
 	> Tuning;
-	
+
 	// GetLaunchParamaters returns (NT, VT) for the arch vesion of the provided
 	// CudaContext. The product of these is the tile size.
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	int NV = launch.x * launch.y;
-	int numBlocks = MGPU_DIV_UP(count, NV);
+	int numBlocks = SGPU_DIV_UP(count, NV);
 	Foo<Tuning><<<numBlocks, launch.x>>>();
 }
 
@@ -73,14 +73,14 @@ struct BarParams {
 	typedef T1_ T1;
 };
 template<typename Tuning>
-MGPU_LAUNCH_BOUNDS void Bar() {
-	typedef MGPU_LAUNCH_PARAMS Params;
+SGPU_LAUNCH_BOUNDS void Bar() {
+	typedef SGPU_LAUNCH_PARAMS Params;
 	if(!blockIdx.x && !threadIdx.x) {
 		printf("Launch Bar<<<%d, %d>>> with NT=%d VT=%d OCC=%d\n",
 			gridDim.x, blockDim.x, Params::NT, Params::VT, Params::OCC);
-		printf("\t\tP1 = %d  sizeof(TT1) = %d\n", Params::P1, 
+		printf("\t\tP1 = %d  sizeof(TT1) = %d\n", Params::P1,
 			sizeof(typename Params::T1));
-	}	
+	}
 }
 
 void LaunchBar(int count, CudaContext& context) {
@@ -92,11 +92,11 @@ void LaunchBar(int count, CudaContext& context) {
 	int2 launch = Tuning::GetLaunchParams(context);
 
 	int nv = launch.x * launch.y;
-	int numBlocks = MGPU_DIV_UP(count, nv);
+	int numBlocks = SGPU_DIV_UP(count, nv);
 	Bar<Tuning><<<numBlocks, launch.x>>>();
 }
 
-int main(int argc, char** argv) { 
+int main(int argc, char** argv) {
 	ContextPtr context = CreateCudaDevice(argc, argv, true);
 
 	printf("Launching Foo with 1000000 inputs:\n");
@@ -107,5 +107,5 @@ int main(int argc, char** argv) {
 	LaunchBar(1000000, *context);
 	cudaDeviceSynchronize();
 
-	return 0; 
-} 
+	return 0;
+}

@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -36,7 +36,7 @@
 
 #include "static.h"
 
-namespace mgpu {
+namespace sgpu {
 
 extern int Rand(int min, int max);
 extern int64 Rand(int64 min, int64 max);
@@ -69,7 +69,7 @@ public:
 	}
 	virtual void Release() {
 	//	if(!BOOST_INTERLOCKED_DECREMENT(&_ref)) delete this;
-		if(!--_ref) delete this;		
+		if(!--_ref) delete this;
 	}
 private:
 	long _ref;
@@ -113,7 +113,7 @@ public:
 	T* get() const { return _p; }
 	operator T*() const { return _p; }
 	T* operator->() const { return _p; }
-	
+
 	void swap(intrusive_ptr& rhs) {
 		std::swap(_p, rhs._p);
 	}
@@ -121,4 +121,4 @@ private:
 	T* _p;
 };
 
-} // namespace mgpu
+} // namespace sgpu

@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -36,26 +36,26 @@
 
 #include "../kernels/csrtools.cuh"
 
-namespace mgpu {
+namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
 // SegReducePreprocess
-	
+
 struct SegReducePreprocessData {
 	int count, numSegments, numSegments2;
 	int numBlocks;
-	MGPU_MEM(int) limitsDevice;
-	MGPU_MEM(int) threadCodesDevice;
+	SGPU_MEM(int) limitsDevice;
+	SGPU_MEM(int) threadCodesDevice;
 
-	// If csr2Device is set, use BulkInsert to finalize results into 
+	// If csr2Device is set, use BulkInsert to finalize results into
 	// dest_global.
-	MGPU_MEM(int) csr2Device;
+	SGPU_MEM(int) csr2Device;
 };
 
 // Generic function for prep
 template<typename Tuning, typename CsrIt>
-MGPU_HOST void SegReducePreprocess(int count, CsrIt csr_global, int numSegments,
-	bool supportEmpty, std::auto_ptr<SegReducePreprocessData>* ppData, 
+SGPU_HOST void SegReducePreprocess(int count, CsrIt csr_global, int numSegments,
+	bool supportEmpty, std::auto_ptr<SegReducePreprocessData>* ppData,
 	CudaContext& context) {
 
 	std::auto_ptr<SegReducePreprocessData> data(new SegReducePreprocessData);
@@ -63,16 +63,16 @@ MGPU_HOST void SegReducePreprocess(int count, CsrIt csr_global, int numSegments,
 	int2 launch = Tuning::GetLaunchParams(context);
 	int NV = launch.x * launch.y;
 
-	int numBlocks = MGPU_DIV_UP(count, NV);
+	int numBlocks = SGPU_DIV_UP(count, NV);
 	data->count = count;
 	data->numSegments = data->numSegments2 = numSegments;
 	data->numBlocks = numBlocks;
 
 	// Filter out empty rows and build a replacement structure.
 	if(supportEmpty) {
-		MGPU_MEM(int) csr2Device = context.Malloc<int>(numSegments + 1);
+		SGPU_MEM(int) csr2Device = context.Malloc<int>(numSegments + 1);
 		CsrStripEmpties<false>(count, csr_global, (const int*)0, numSegments,
-			csr2Device->get(), (int*)0, (int*)&data->numSegments2, context); 
+			csr2Device->get(), (int*)0, (int*)&data->numSegments2, context);
 		if(data->numSegments2 < numSegments) {
 			csr_global = csr2Device->get();
 			numSegments = data->numSegments2;
@@ -82,7 +82,7 @@ MGPU_HOST void SegReducePreprocess(int count, CsrIt csr_global, int numSegments,
 
 	data->limitsDevice = PartitionCsrSegReduce(count, NV, csr_global,
 		numSegments, (const int*)0, numBlocks + 1, context);
-	data->threadCodesDevice = BuildCsrPlus<Tuning>(count, csr_global, 
+	data->threadCodesDevice = BuildCsrPlus<Tuning>(count, csr_global,
 		data->limitsDevice->get(), numBlocks, context);
 
 	*ppData = data;
@@ -110,13 +110,13 @@ __global__ void KernelSegReduceSpine1(const int* limits_global, int count,
 	int gid = NT * block + tid;
 
 	// Load the current carry-in and the current and next row indices.
-	int row = (gid < count) ? 
+	int row = (gid < count) ?
 		(0x7fffffff & limits_global[gid]) :
 		INT_MAX;
-	int row2 = (gid + 1 < count) ? 
+	int row2 = (gid + 1 < count) ?
 		(0x7fffffff & limits_global[gid + 1]) :
 		INT_MAX;
-	
+
 	T carryIn2 = (gid < count) ? carryIn_global[gid] : identity;
 	T dest = (gid < count) ? dest_global[row] : identity;
 
@@ -126,11 +126,11 @@ __global__ void KernelSegReduceSpine1(const int* limits_global, int count,
 	T carryOut;
 	T x = SegScan::SegScan(tid, carryIn2, endFlag, shared.segScanStorage,
 		&carryOut, identity, op);
-			
+
 	// Store the reduction at the end of a segment to dest_global.
 	if(endFlag)
 		dest_global[row] = op(x, dest);
-	
+
 	// Store the CTA carry-out.
 	if(!tid) carryOut_global[block] = carryOut;
 }
@@ -149,21 +149,21 @@ __global__ void KernelSegReduceSpine2(const int* limits_global, int numBlocks,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	
+
 	for(int i = 0; i < numBlocks; i += NT) {
 		int gid = (i + tid) * nv;
 
 		// Load the current carry-in and the current and next row indices.
-		int row = (gid < count) ? 
+		int row = (gid < count) ?
 			(0x7fffffff & limits_global[gid]) : INT_MAX;
-		int row2 = (gid + nv < count) ? 
+		int row2 = (gid + nv < count) ?
 			(0x7fffffff & limits_global[gid + nv]) : INT_MAX;
 		T carryIn2 = (i + tid < numBlocks) ? carryIn_global[i + tid] : identity;
 		T dest = (gid < count) ? dest_global[row] : identity;
 
 		// Run a segmented scan of the carry-in values.
 		bool endFlag = row != row2;
-		
+
 		T carryOut;
 		T x = SegScan::SegScan(tid, carryIn2, endFlag, shared.segScanStorage,
 			&carryOut, identity, op);
@@ -172,7 +172,7 @@ __global__ void KernelSegReduceSpine2(const int* limits_global, int numBlocks,
 		if(endFlag) {
 			// Add the carry-in from the last loop iteration to the carry-in
 			// from this loop iteration.
-			if(i && row == shared.carryInRow) 
+			if(i && row == shared.carryInRow)
 				x = op(shared.carryIn, x);
 			dest_global[row] = op(x, dest);
 		}
@@ -199,27 +199,27 @@ __global__ void KernelSegReduceSpine2(const int* limits_global, int numBlocks,
 }
 
 template<typename T, typename Op, typename DestIt>
-MGPU_HOST void SegReduceSpine(const int* limits_global, int count, 
-	DestIt dest_global, const T* carryIn_global, T identity, Op op, 
+SGPU_HOST void SegReduceSpine(const int* limits_global, int count,
+	DestIt dest_global, const T* carryIn_global, T identity, Op op,
 	CudaContext& context) {
 
 	const int NT = 128;
-	int numBlocks = MGPU_DIV_UP(count, NT);
+	int numBlocks = SGPU_DIV_UP(count, NT);
 
 	// Fix-up the segment outputs between the original tiles.
-	MGPU_MEM(T) carryOutDevice = context.Malloc<T>(numBlocks);
+	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numBlocks);
 	KernelSegReduceSpine1<NT><<<numBlocks, NT, 0, context.Stream()>>>(
 		limits_global, count, dest_global, carryIn_global, identity, op,
 		carryOutDevice->get());
-	MGPU_SYNC_CHECK("KernelSegReduceSpine1");
+	SGPU_SYNC_CHECK("KernelSegReduceSpine1");
 
-	// Loop over the segments that span the tiles of 
+	// Loop over the segments that span the tiles of
 	// KernelSegReduceSpine1 and fix those.
 	if(numBlocks > 1) {
 		KernelSegReduceSpine2<NT><<<1, NT, 0, context.Stream()>>>(
 			limits_global, numBlocks, count, NT, dest_global,
 			carryOutDevice->get(), identity, op);
-		MGPU_SYNC_CHECK("KernelSegReduceSpine2");
+		SGPU_SYNC_CHECK("KernelSegReduceSpine2");
 	}
 }
 
@@ -228,13 +228,13 @@ MGPU_HOST void SegReduceSpine(const int* limits_global, int count,
 
 template<int NT_, int VT_, int OCC_, bool HalfCapacity_, bool LdgTranspose_>
 struct SegReduceTuning {
-	enum { 
+	enum {
 		NT = NT_,
-		VT = VT_, 
+		VT = VT_,
 		OCC = OCC_,
 		HalfCapacity = HalfCapacity_,
 		LdgTranspose = LdgTranspose_
 	};
 };
 
-} // namespace mgpu
+} // namespace sgpu

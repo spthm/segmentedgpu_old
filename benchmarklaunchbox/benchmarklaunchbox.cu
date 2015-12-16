@@ -1,6 +1,6 @@
 /******************************************************************************
  * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
- * 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *     * Redistributions of source code must retain the above copyright
@@ -11,10 +11,10 @@
  *     * Neither the name of the NVIDIA CORPORATION nor the
  *       names of its contributors may be used to endorse or promote products
  *       derived from this software without specific prior written permission.
- * 
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED. IN NO EVENT SHALL NVIDIA CORPORATION BE LIABLE FOR ANY
  * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
  * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
@@ -34,21 +34,21 @@
 
 #include "kernels/mergesort.cuh"
 
-using namespace mgpu;
+using namespace sgpu;
 
 // Copy MergesortKeys host function from kernels/mergesort.cuh and modify to
 // expose the tuning structure.
 template<typename Tuning, typename T, typename Comp>
-MGPU_HOST void TuningMergesortKeys(T* data_global, int count, Comp comp,
+SGPU_HOST void TuningMergesortKeys(T* data_global, int count, Comp comp,
 	CudaContext& context) {
-	
+
 	int2 launch = Tuning::GetLaunchParams(context);
-	
+
 	const int NV = launch.x * launch.y;
-	int numBlocks = MGPU_DIV_UP(count, NV);
+	int numBlocks = SGPU_DIV_UP(count, NV);
 	int numPasses = FindLog2(numBlocks, true);
 
-	MGPU_MEM(T) destDevice = context.Malloc<T>(count);
+	SGPU_MEM(T) destDevice = context.Malloc<T>(count);
 	T* source = data_global;
 	T* dest = destDevice->get();
 
@@ -59,12 +59,12 @@ MGPU_HOST void TuningMergesortKeys(T* data_global, int count, Comp comp,
 
 	for(int pass = 0; pass < numPasses; ++pass) {
 		int coop = 2<< pass;
-		MGPU_MEM(int) partitionsDevice = MergePathPartitions<MgpuBoundsLower>(
+		SGPU_MEM(int) partitionsDevice = MergePathPartitions<SgpuBoundsLower>(
 			source, count, source, 0, NV, coop, comp, context);
-		
+
 		KernelMerge<Tuning, false, true>
-			<<<numBlocks, launch.x, 0, context.Stream()>>>(source, 
-			(const int*)0, count, source, (const int*)0, 0, 
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(source,
+			(const int*)0, count, source, (const int*)0, 0,
 			partitionsDevice->get(), coop, dest, (int*)0, comp);
 		std::swap(dest, source);
 	}
@@ -72,29 +72,29 @@ MGPU_HOST void TuningMergesortKeys(T* data_global, int count, Comp comp,
 
 template<typename Tuning, typename T>
 void BenchmarkTunedMergesort(int count, int numIt, CudaContext& context) {
-	MGPU_MEM(T) source = context.GenRandom<T>(count, 0, (T)count);
-	MGPU_MEM(T) data = context.Malloc<T>(count);
+	SGPU_MEM(T) source = context.GenRandom<T>(count, 0, (T)count);
+	SGPU_MEM(T) data = context.Malloc<T>(count);
 	std::vector<T> sourceHost;
 	source->ToHost(sourceHost);
 
-	double mgpuElapsed = 0;
+	double sgpuElapsed = 0;
 	for(int it = 0; it < numIt; ++it) {
 		source->ToDevice(data->get(), count);
 		context.Start();
-		TuningMergesortKeys<Tuning>(data->get(), count, mgpu::less<T>(),
+		TuningMergesortKeys<Tuning>(data->get(), count, sgpu::less<T>(),
 			context);
-		mgpuElapsed += context.Split();
+		sgpuElapsed += context.Split();
 	}
-	
+
 	double bytes = 2 * sizeof(T) * count;
-	double mgpuThroughput = (double)count * numIt / mgpuElapsed;
-	double mgpuBandwidth = bytes * numIt / mgpuElapsed;
+	double sgpuThroughput = (double)count * numIt / sgpuElapsed;
+	double sgpuBandwidth = bytes * numIt / sgpuElapsed;
 
 	int2 launch = Tuning::GetLaunchParams(context);
 	printf("%3dx%2d - %s: %9.3lf M/s  %7.3lf GB/s\n",
 		launch.x, launch.y, FormatInteger(count).c_str(),
-		mgpuThroughput / 1.0e6, mgpuBandwidth / 1.0e9);
-	
+		sgpuThroughput / 1.0e6, sgpuBandwidth / 1.0e9);
+
 	// Verify
 	std::sort(sourceHost.begin(), sourceHost.end());
 	std::vector<T> host;
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
 	BenchmarkTunedMergesort<Tuning10, T1>(N, 200, *context);
 	BenchmarkTunedMergesort<Tuning11, T1>(N, 200, *context);
 	BenchmarkTunedMergesort<Tuning12, T1>(N, 200, *context);
-	
+
 	printf("\nTuning for type %s.\n", TypeIdName<T2>());
 	BenchmarkTunedMergesort<Tuning1, T2>(N, 200, *context);
 	BenchmarkTunedMergesort<Tuning2, T2>(N, 200, *context);
