@@ -72,38 +72,37 @@ struct CTAReduce {
 // Valid for T = {int, long long,
 //                unsigned int, unsigned long long,
 //                float, double}
+
 template<int NT, typename T, typename Op>
 SGPU_DEVICE T ReduceNumeric(int tid, T x, T* shared, Op op) {
 
-    const int NumSections = WARP_SIZE;
-    const int SecSize = NT / NumSections;
-    int lane = (SecSize - 1) & tid;
-    int sec = tid / SecSize;
+    const int NumWarps = NT / WARP_SIZE;
+    int lane = tid % WARP_SIZE;
+    int wid = tid / WARP_SIZE;
 
     // In the first phase, threads cooperatively find the reduction within
-    // their segment. The segments are SecSize threads (NT / WARP_SIZE)
-    // wide.
+    // their warp.
     #pragma unroll
-    for(int offset = 1; offset < SecSize; offset *= 2)
-        x = op(x, shfl_up(x, offset, SecSize));
+    for(int offset = 1; offset < WARP_SIZE; offset *= 2)
+        x = op(x, shfl_up(x, offset));
 
-    // The last thread in each segment stores the local reduction to shared
+    // The last thread in each warp stores the warp's reduction to shared
     // memory.
-    if(SecSize - 1 == lane) shared[sec] = x;
+    if(lane == WARP_SIZE - 1) shared[wid] = x;
     __syncthreads();
 
-    // Reduce the totals of each input segment. The spine is WARP_SIZE
-    // threads wide.
-    if(tid < NumSections) {
+    // Reduce the totals of each warp. The spine is NumWarps threads wide, and
+    // NumWarps can be at most WARP_SIZE.
+    if(tid < NumWarps) {
         x = shared[tid];
         #pragma unroll
-        for(int offset = 1; offset < NumSections; offset *= 2)
-            x = op(x, shfl_up(x, offset, NumSections));
+        for(int offset = 1; offset < NumWarps; offset *= 2)
+            x = op(x, shfl_up(x, offset));
         shared[tid] = x;
     }
     __syncthreads();
 
-    T reduction = shared[NumSections - 1];
+    T reduction = shared[NumWarps - 1];
     __syncthreads();
 
     return reduction;
