@@ -120,6 +120,19 @@ public:
 	// LaunchBox properties.
 	int PTXVersion() const { return _ptxVersion; }
 
+	template<typename T>
+	int MaxActiveBlocks(T kernel, int blockSize, size_t dynamicSMemSize = 0) const {
+		int maxBlocksPerSM;
+#if CUDA_VERSION < 6050
+		maxBlocksPerSM = 1;
+#else
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxBlocksPerSM, kernel,
+			blockSize, dynamicSMemSize);
+#endif
+
+		return maxBlocksPerSM * NumSMs();
+	}
+
 	std::string DeviceString() const;
 
 	// Set this device as the active device on the thread.
@@ -270,6 +283,12 @@ public:
 	int NumSMs() { return Device().NumSMs(); }
 	int ArchVersion() { return Device().ArchVersion(); }
 	int PTXVersion() { return Device().PTXVersion(); }
+
+	template<typename T>
+	int MaxActiveBlocks(T kernel, size_t dynamicSMemSize = 0) {
+		return Device().MaxActiveBlocks(kernel, dynamicSMemSize);
+	}
+
 	std::string DeviceString() { return Device().DeviceString(); }
 
 	cudaStream_t Stream() const { return _stream; }

@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2015, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,8 +28,11 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
@@ -63,7 +67,7 @@ Reduce(InputIt data_global, int count, CudaContext& context);
 // SgpuScanType may be:
 //		SgpuScanTypeExc (exclusive) or
 //		SgpuScanTypeInc (inclusive).
-// Return the total in device memory, host memory, or both.
+// Returns the total in device memory, host memory, or both.
 template<SgpuScanType Type, typename DataIt, typename T, typename Op,
 	typename DestIt>
 SGPU_HOST void Scan(DataIt data_global, int count, T identity, Op op,
@@ -79,6 +83,36 @@ SGPU_HOST void ScanExc(InputIt data_global, int count, TotalType* total,
 // Like above, but don't return the total.
 template<typename InputIt>
 SGPU_HOST void ScanExc(InputIt data_global, int count, CudaContext& context);
+
+
+////////////////////////////////////////////////////////////////////////////////
+// kernels/streamscan.cuh
+
+// Scan inputs in device memory.
+// StreamScan is typically faster for input sizes > 1M, particularly for 4-byte
+// data types.
+// It is limited to 1-, 2-, 4-, 8- and 16-byte data types (which includes all
+// C++ numeric types and all CUDA builtin vector types, excluding double4 and
+// [u]longlong4.
+// SgpuScanType may be:
+//		SgpuScanTypeExc (exclusive) or
+//		SgpuScanTypeInc (inclusive).
+// Returns the total in device memory, host memory, or both.
+template<SgpuScanType Type, typename DataIt, typename T, typename Op,
+	typename DestIt>
+SGPU_HOST void StreamScan(DataIt data_global, int count, T identity, Op op,
+	T* reduce_global, T* reduce_host, DestIt dest_global,
+	CudaContext& context);
+
+// Exclusive scan with identity = 0 and op = sgpu::plus<T>.
+// Returns the total in host memory.
+template<typename InputIt, typename TotalType>
+SGPU_HOST void StreamScanExc(InputIt data_global, int count, TotalType* total,
+	CudaContext& context);
+
+// Like above, but don't return the total.
+template<typename InputIt>
+SGPU_HOST void StreamScanExc(InputIt data_global, int count, CudaContext& context);
 
 
 ////////////////////////////////////////////////////////////////////////////////

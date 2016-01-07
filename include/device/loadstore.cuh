@@ -670,4 +670,70 @@ SGPU_DEVICE void DeviceTransferMergeValuesShared(int count, const T* a_global,
 	DeviceRegToGlobal<NT, VT>(count, reg, tid, dest_global, sync);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Non-cooperative L2 cache access functions.
+
+#if defined(__LP64__) || defined(_WIN64)
+#define SGPU_PTR_CONSTRAINT "l"
+#else
+#define SGPU_PTR_CONSTRAINT "r"
+#endif
+
+template<typename T>
+SGPU_DEVICE void DeviceL2Load(volatile T* addr, T* reg) {
+	if(sizeof(T) == 1) {
+		// There is no inline asm constraint letter for char types, so we use a
+		// short for 1-byte reads.
+		short x;
+		asm volatile ("ld.global.cg.s8 %0, [%1];" : "=h"(x) : SGPU_PTR_CONSTRAINT(addr) : "memory");
+		*reg = *reinterpret_cast<T*>(&x);
+	}
+	else if(sizeof(T) == 2) {
+		short x;
+		asm volatile ("ld.global.cg.s16 %0, [%1];" : "=h"(x) : SGPU_PTR_CONSTRAINT(addr) : "memory");
+		*reg = *reinterpret_cast<T*>(&x);
+	}
+	else if(sizeof(T) == 4) {
+		int x;
+		asm volatile ("ld.global.cg.s32 %0, [%1];" : "=r"(x) : SGPU_PTR_CONSTRAINT(addr) : "memory");
+		*reg = *reinterpret_cast<T*>(&x);
+	}
+	else if(sizeof(T) == 8) {
+		double x;
+		asm volatile ("ld.global.cg.f64 %0, [%1];" : "=d"(x) : SGPU_PTR_CONSTRAINT(addr) : "memory");
+		*reg = *reinterpret_cast<T*>(&x);
+	}
+	else if(sizeof(T) == 16) {
+		double2 x;
+		asm volatile ("ld.global.cg.v2.f64 {%0, %1}, [%2];" : "=d"(x.x), "=d"(x.y) : SGPU_PTR_CONSTRAINT(addr) : "memory");
+		*reg = *reinterpret_cast<T*>(&x);
+	}
+}
+
+template<typename T>
+SGPU_DEVICE void DeviceL2Store(T reg, volatile T* addr) {
+	if(sizeof(T) == 1) {
+		// There is no inline asm constraint letter for char types, so we use a
+		// short for 1-byte stores.
+		short x = *reinterpret_cast<short*>(&reg);
+		asm volatile ("st.global.cg.s8 [%0], %1;" :: SGPU_PTR_CONSTRAINT(addr), "h"(x) : "memory");
+	}
+	else if(sizeof(T) == 2) {
+		short x = *reinterpret_cast<short*>(&reg);
+		asm volatile ("st.global.cg.s16 [%0], %1;" :: SGPU_PTR_CONSTRAINT(addr), "h"(x) : "memory");
+	}
+	else if(sizeof(T) == 4) {
+		int x = *reinterpret_cast<int*>(&reg);
+		asm volatile ("st.global.cg.s32 [%0], %1;" :: SGPU_PTR_CONSTRAINT(addr), "r"(x) : "memory");
+	}
+	else if(sizeof(T) == 8) {
+		double x = *reinterpret_cast<double*>(&reg);
+		asm volatile ("st.global.cg.f64 [%0], %1;" :: SGPU_PTR_CONSTRAINT(addr), "d"(x) : "memory");
+	}
+	else if(sizeof(T) == 16) {
+		double2 x = *reinterpret_cast<double2*>(&reg);
+		asm volatile ("st.global.cg.v2.f64 [%0], {%1, %2};" :: SGPU_PTR_CONSTRAINT(addr), "d"(x.x), "d"(x.y) : "memory");
+	}
+}
+
 } // namespace sgpu

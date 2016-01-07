@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2015, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -26,6 +27,7 @@
  ******************************************************************************/
 
 #include "kernels/scan.cuh"
+#include "kernels/streamscan.cuh"
 #include "kernels/reduce.cuh"
 
 using namespace sgpu;
@@ -58,7 +60,51 @@ void BenchmarkScan(int count, int numIt, typename Op::result_type identity,
 	printf("%s: %9.3lf M/s  %7.3lf GB/s\n", FormatInteger(count).c_str(),
 		sgpuThroughput / 1.0e6, sgpuBandwidth / 1.0e9);
 
-	// Verify the results again the host calculation.
+	// Verify the results against the host calculation.
+	std::vector<T> host;
+	resultDevice->ToHost(host);
+
+	std::vector<T> inputHost;
+	inputDevice->ToHost(inputHost);
+
+	T x = identity;
+	for(int i = 0; i < count; ++i) {
+		if(x != host[i]) {
+			printf("ERROR AT %d\n", i);
+			exit(0);
+		}
+		T value = inputHost[i];
+		x = op(x, value);
+	}
+}
+
+template<typename Op>
+void BenchmarkStreamScan(int count, int numIt, typename Op::result_type identity,
+	Op op, CudaContext& context) {
+
+#ifdef _DEBUG
+	numIt = 1;
+#endif
+
+	typedef typename Op::result_type T;
+	SGPU_MEM(T) inputDevice = //context.GenRandom<T>(count, 0, 10);
+		context.Fill<T>(count, 1);
+	SGPU_MEM(T) resultDevice = context.Malloc<T>(count);
+
+	// Benchmark SGPU
+	context.Start();
+	for(int it = 0; it < numIt; ++it)
+		StreamScan<SgpuScanTypeExc>(inputDevice->get(), count,
+			identity, op, (T*)0, (T*)0, resultDevice->get(), context);
+	double sgpuElapsed = context.Split();
+
+	double bytes = (2 * sizeof(T)) * count;
+	double sgpuThroughput = (double)count * numIt / sgpuElapsed;
+	double sgpuBandwidth = bytes * numIt / sgpuElapsed;
+	printf("%s: %9.3lf M/s  %7.3lf GB/s\n", FormatInteger(count).c_str(),
+		sgpuThroughput / 1.0e6, sgpuBandwidth / 1.0e9);
+
+	// Verify the results against the host calculation.
 	std::vector<T> host;
 	resultDevice->ToHost(host);
 
@@ -139,6 +185,16 @@ int main(int argc, char** argv) {
 		for(int test = 0; test < NumTests; ++test)
 			BenchmarkScan<Op2>(Tests[test][0], Tests[test][1], (T2)0, Op2(),
 				*context);
+
+		printf("\nBenchmarking stream scan on type %s\n", TypeIdName<T1>());
+		for(int test = 0; test < NumTests; ++test)
+			BenchmarkStreamScan<Op1>(Tests[test][0], Tests[test][1], (T1)0,
+				Op1(), *context);
+
+		printf("\nBenchmarking stream scan on type %s\n", TypeIdName<T2>());
+		for(int test = 0; test < NumTests; ++test)
+			BenchmarkStreamScan<Op2>(Tests[test][0], Tests[test][1], (T2)0,
+				Op2(), *context);
 	}
 	{
 		typedef sgpu::maximum<T1> Op1;
