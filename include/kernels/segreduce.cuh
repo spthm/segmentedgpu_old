@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,8 +28,11 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
@@ -37,56 +41,6 @@
 #include "../kernels/csrtools.cuh"
 
 namespace sgpu {
-
-////////////////////////////////////////////////////////////////////////////////
-// SegReducePreprocess
-
-struct SegReducePreprocessData {
-	int count, numSegments, numSegments2;
-	int numBlocks;
-	SGPU_MEM(int) limitsDevice;
-	SGPU_MEM(int) threadCodesDevice;
-
-	// If csr2Device is set, use BulkInsert to finalize results into
-	// dest_global.
-	SGPU_MEM(int) csr2Device;
-};
-
-// Generic function for prep
-template<typename Tuning, typename CsrIt>
-SGPU_HOST void SegReducePreprocess(int count, CsrIt csr_global, int numSegments,
-	bool supportEmpty, std::auto_ptr<SegReducePreprocessData>* ppData,
-	CudaContext& context) {
-
-	std::auto_ptr<SegReducePreprocessData> data(new SegReducePreprocessData);
-
-	int2 launch = Tuning::GetLaunchParams(context);
-	int NV = launch.x * launch.y;
-
-	int numBlocks = SGPU_DIV_UP(count, NV);
-	data->count = count;
-	data->numSegments = data->numSegments2 = numSegments;
-	data->numBlocks = numBlocks;
-
-	// Filter out empty rows and build a replacement structure.
-	if(supportEmpty) {
-		SGPU_MEM(int) csr2Device = context.Malloc<int>(numSegments + 1);
-		CsrStripEmpties<false>(count, csr_global, (const int*)0, numSegments,
-			csr2Device->get(), (int*)0, (int*)&data->numSegments2, context);
-		if(data->numSegments2 < numSegments) {
-			csr_global = csr2Device->get();
-			numSegments = data->numSegments2;
-			data->csr2Device = csr2Device;
-		}
-	}
-
-	data->limitsDevice = PartitionCsrSegReduce(count, NV, csr_global,
-		numSegments, (const int*)0, numBlocks + 1, context);
-	data->threadCodesDevice = BuildCsrPlus<Tuning>(count, csr_global,
-		data->limitsDevice->get(), numBlocks, context);
-
-	*ppData = data;
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 // SegReduceSpine

@@ -79,7 +79,7 @@ void TestCsrReduce(int count, int randomSize, int numIterations,
 
 	SGPU_MEM(T) resultsDevice = context.Malloc<T>(numRows);
 
-	std::auto_ptr<SegReducePreprocessData> preprocessData;
+	std::auto_ptr<SegCsrPreprocessData> preprocessData;
 	SegReduceCsrPreprocess<T>(count, csrDevice->get(), numRows, supportEmpty,
 		&preprocessData, context);
 

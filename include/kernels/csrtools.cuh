@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,8 +28,11 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
@@ -45,7 +49,7 @@ namespace sgpu {
 // Standard upper-bound partitioning.
 
 template<int NT, typename CsrIt>
-__global__ void KernelPartitionCsrSegReduce(int nz, int nv, CsrIt csr_global,
+__global__ void KernelPartitionCsrPlus(int nz, int nv, CsrIt csr_global,
 	int numRows, const int* numRows2, int numPartitions, int* limits_global) {
 
 	if(numRows2) numRows = *numRows2;
@@ -69,7 +73,7 @@ __global__ void KernelPartitionCsrSegReduce(int nz, int nv, CsrIt csr_global,
 }
 
 template<typename CsrIt>
-SGPU_HOST SGPU_MEM(int) PartitionCsrSegReduce(int count, int nv,
+SGPU_HOST SGPU_MEM(int) PartitionCsrPlus(int count, int nv,
 	CsrIt csr_global, int numRows, const int* numRows2, int numPartitions,
 	CudaContext& context) {
 
@@ -77,10 +81,10 @@ SGPU_HOST SGPU_MEM(int) PartitionCsrSegReduce(int count, int nv,
 	SGPU_MEM(int) limitsDevice = context.Malloc<int>(numPartitions);
 
 	int numBlocks2 = SGPU_DIV_UP(numPartitions, 64);
-	KernelPartitionCsrSegReduce<64><<<numBlocks2, 64, 0, context.Stream()>>>(
+	KernelPartitionCsrPlus<64><<<numBlocks2, 64, 0, context.Stream()>>>(
 		count, nv, csr_global, numRows, numRows2, numPartitions,
 		limitsDevice->get());
-	SGPU_SYNC_CHECK("KernelPartitionCsrSegReduce");
+	SGPU_SYNC_CHECK("KernelPartitionCsrPlus");
 
 	return limitsDevice;
 }
@@ -332,6 +336,56 @@ SGPU_HOST void CsrStripEmpties(int nz, CsrIt csr_global,
 		nz, csr_global, sources_global, numRows, countsDevice->get(),
 		csr2_global, sources2_global);
 	SGPU_SYNC_CHECK("KernelCsrStringEmptiesDownsweep");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// SegCsrPreprocess
+
+struct SegCsrPreprocessData {
+	int count, numSegments, numSegments2;
+	int numBlocks;
+	SGPU_MEM(int) limitsDevice;
+	SGPU_MEM(int) threadCodesDevice;
+
+	// If csr2Device is set, use BulkInsert to finalize results into
+	// dest_global.
+	SGPU_MEM(int) csr2Device;
+};
+
+// Generic function for prep
+template<typename Tuning, typename CsrIt>
+SGPU_HOST void SegCsrPreprocess(int count, CsrIt csr_global, int numSegments,
+	bool supportEmpty, std::auto_ptr<SegCsrPreprocessData>* ppData,
+	CudaContext& context) {
+
+	std::auto_ptr<SegCsrPreprocessData> data(new SegCsrPreprocessData);
+
+	int2 launch = Tuning::GetLaunchParams(context);
+	int NV = launch.x * launch.y;
+
+	int numBlocks = SGPU_DIV_UP(count, NV);
+	data->count = count;
+	data->numSegments = data->numSegments2 = numSegments;
+	data->numBlocks = numBlocks;
+
+	// Filter out empty rows and build a replacement structure.
+	if(supportEmpty) {
+		SGPU_MEM(int) csr2Device = context.Malloc<int>(numSegments + 1);
+		CsrStripEmpties<false>(count, csr_global, (const int*)0, numSegments,
+			csr2Device->get(), (int*)0, (int*)&data->numSegments2, context);
+		if(data->numSegments2 < numSegments) {
+			csr_global = csr2Device->get();
+			numSegments = data->numSegments2;
+			data->csr2Device = csr2Device;
+		}
+	}
+
+	data->limitsDevice = PartitionCsrPlus(count, NV, csr_global, numSegments,
+		(const int*)0, numBlocks + 1, context);
+	data->threadCodesDevice = BuildCsrPlus<Tuning>(count, csr_global,
+		data->limitsDevice->get(), numBlocks, context);
+
+	*ppData = data;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,8 +28,11 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
@@ -150,6 +154,123 @@ SGPU_DEVICE SegReduceTerms DeviceSegReducePrepare(int* csr_shared, int numRows,
 	SegReduceTerms terms = { endFlags, tidDelta };
 	return terms;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// CTASegReduceLoad
+// Load logic for segmented reduce and interval reduce. Supports direct and
+// indirect loads, and has fast- and slow-path indirect loads.
+// Pass the Reduce function data in thread order.
+
+template<int NT, int VT, bool HalfCapacity, bool LdgTranspose, typename T>
+struct CTASegReduceLoad {
+	enum {
+		NV = NT * VT,
+		Capacity = HalfCapacity ? (NV / 2) : NV
+	};
+
+	union Storage {
+		int sources[NV];
+		T data[Capacity];
+	};
+
+	// Load elements from multiple segments and store in thread order.
+	template<typename InputIt>
+	SGPU_DEVICE static void LoadDirect(int count2, int tid, int gid,
+		InputIt data_global, T identity, T data[VT], Storage& storage) {
+
+		if(LdgTranspose) {
+			// Load data in thread order from data_global + gid.
+			DeviceGlobalToThreadDefault<NT, VT>(count2, data_global + gid,
+				tid, data, identity);
+		} else {
+			// Load data in strided order from data_global + gid.
+			T stridedData[VT];
+			DeviceGlobalToRegDefault<NT, VT>(count2, data_global + gid, tid,
+				stridedData, identity);
+
+			if(HalfCapacity)
+				HalfSmemTranspose<NT, VT>(stridedData, tid, storage.data, data);
+			else {
+				DeviceRegToShared<NT, VT>(stridedData, tid, storage.data);
+				DeviceSharedToThread<VT>(storage.data, tid, data);
+			}
+		}
+	}
+
+	// Load elements from multiple segments and store in thread order.
+	template<typename InputIt, typename SourcesIt>
+	SGPU_DEVICE static void LoadIndirect(int count2, int tid, int gid,
+		int numSegments, int startSeg, const int segs[VT + 1],
+		const int segStarts[VT], InputIt data_global, SourcesIt sources_global,
+		T identity, T data[VT], Storage& storage) {
+
+		T stridedData[VT];
+
+		// Load source offsets from sources_global into smem.
+		DeviceGlobalToSharedLoop<NT, VT>(numSegments, sources_global + startSeg,
+			tid, storage.sources);
+
+		// Compute the offset of each element within its segment.
+		int indices[VT];
+		#pragma unroll
+		for(int i = 0; i < VT; ++i) {
+			int index = VT * tid + i;
+			int segOffset = gid + index - segStarts[i];
+			int source = storage.sources[segs[i]];
+			indices[i] = (index < count2) ? (source + segOffset) : 0;
+		}
+		__syncthreads();
+
+		if(LdgTranspose) {
+			// Directly load in thread order.
+			#pragma unroll
+			for(int i = 0; i < VT; ++i)
+				data[i] = ldg(data_global + indices[i]);
+		} else {
+			// Transpose indices through shared memory.
+			DeviceThreadToShared<VT>(indices, tid, storage.sources);
+			DeviceSharedToReg<NT, VT>(storage.sources, tid, indices);
+
+			// Cooperatively load all data elements.
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				int index = NT * i + tid;
+				stridedData[i] = (index < count2) ?
+					data_global[indices[i]] :
+					identity;
+			}
+			if(HalfCapacity)
+				HalfSmemTranspose<NT, VT>(stridedData, tid, storage.data, data);
+			else {
+				DeviceRegToShared<NT, VT>(stridedData, tid, storage.data);
+				DeviceSharedToThread<VT>(storage.data, tid, data);
+			}
+		}
+	}
+
+	// Load elements from a single segment and store in thread order.
+	template<typename CsrIt, typename InputIt, typename SourcesIt>
+	SGPU_DEVICE static void LoadIndirectFast(int tid, int gid,
+		int startSeg, CsrIt csr_global, InputIt data_global,
+		SourcesIt sources_global, T data[VT], Storage& storage) {
+
+		int source = sources_global[startSeg];
+		int csr = csr_global[startSeg];
+
+		int offset = source + gid - csr;
+
+		// Round down to a multiple of NT. This guarantees all loads are
+		// cache-line aligned.
+		int mod = offset % NT;
+		int start = offset - mod;
+
+		data_global += start;
+		data[0] = data_global[(tid < mod) ? (NV + tid) : tid];
+		#pragma unroll
+		for(int i = 1; i < VT; ++i)
+			data[i] = data_global[NT * i + tid];
+	}
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // CTASegReduce

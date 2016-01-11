@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION; 2015, Sam Thomson.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -273,11 +273,11 @@ SGPU_HOST void SegSortPairsFromIndices(KeyType* keys_global,
 ////////////////////////////////////////////////////////////////////////////////
 // kernels/segreducecsr.cuh
 
-// SegReducePreprocessData is defined in segreduce.cuh. It includes:
+// SegCsrPreprocessData is defined in csrtools.cuh. It includes:
 // -	limits for CSR->tiles
 // -	packed thread codes for each thread in the reduction
 // -	(optional) CSR2 array of filtered segment offsets
-struct SegReducePreprocessData;
+struct SegCsrPreprocessData;
 
 // SegReduceCsr runs a segmented reduction given an input and a sorted list of
 // segment start offsets. This implementation requires operators support
@@ -337,10 +337,10 @@ SGPU_HOST void IndirectReduceCsr(InputIt data_global, int count,
 template<typename T, typename CsrIt>
 SGPU_HOST void SegReduceCsrPreprocess(int count, CsrIt csr_global,
 	int numSegments, bool supportEmpty,
-	std::auto_ptr<SegReducePreprocessData>* ppData, CudaContext& context);
+	std::auto_ptr<SegCsrPreprocessData>* ppData, CudaContext& context);
 
 template<typename InputIt, typename DestIt, typename T, typename Op>
-SGPU_HOST void SegReduceApply(const SegReducePreprocessData& preprocess,
+SGPU_HOST void SegReduceApply(const SegCsrPreprocessData& preprocess,
 	InputIt data_global, T identity, Op op, DestIt dest_global,
 	CudaContext& context);
 
