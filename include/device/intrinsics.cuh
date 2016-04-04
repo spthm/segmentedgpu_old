@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,8 +28,11 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
