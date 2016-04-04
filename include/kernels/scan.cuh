@@ -222,7 +222,7 @@ SGPU_HOST void ScanExc(InputIt data_global, int count, T* total,
 	CudaContext& context) {
 
 	Scan<SgpuScanTypeExc>(data_global, count, (T)0, sgpu::plus<T>(), (T*)0,
-		total, data_global,context);
+		total, data_global, context);
 }
 
 template<typename InputIt>

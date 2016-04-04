@@ -341,7 +341,7 @@ SGPU_DEVICE void DeviceGlobalToGlobal(int count, InputIt source, int tid,
 // using only NT * VT / 2 elements of shared memory.
 
 template<int NT, int VT, typename T>
-SGPU_DEVICE void HalfSmemTranspose(const T* x, int tid, T* shared, T* y) {
+SGPU_DEVICE void HalfSmemRegToThread(const T* x, int tid, T* shared, T* y) {
 
 	// Transpose the first half values (tid < NT / 2)
 	#pragma unroll
@@ -369,6 +369,42 @@ SGPU_DEVICE void HalfSmemTranspose(const T* x, int tid, T* shared, T* y) {
 		for(int i = 0; i < VT; ++i)
 			y[i] = shared[VT * tid + i - NT * VT / 2];
 	}
+	__syncthreads();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Transponse VT thread-order elements in NT threads (y) into registers (x)
+// using only NT * VT / 2 elements of shared memory.
+
+template<int NT, int VT, typename T>
+SGPU_DEVICE void HalfSmemThreadToReg(const T* y, int tid, T* shared, T* x) {
+
+	// Transpose the first half values (tid < NT / 2)
+	if(tid < NT / 2) {
+		#pragma unroll
+		for(int i = 0; i < VT; ++i)
+			shared[VT * tid + i] = y[i];
+	}
+	__syncthreads();
+
+	#pragma unroll
+	for(int i = 0; i <= VT / 2; ++i)
+		if(i < VT / 2 || tid < NT / 2)
+			x[i] = shared[NT * i + tid];
+	__syncthreads();
+
+	// Transpose the second half values (tid >= NT / 2)
+	if(tid >= NT / 2) {
+		#pragma unroll
+		for(int i = 0; i < VT; ++i)
+			shared[VT * tid + i - NT * VT / 2] = y[i];
+	}
+	__syncthreads();
+
+	#pragma unroll
+	for(int i = VT / 2; i < VT; ++i)
+		if(i > VT / 2 || tid >= NT / 2)
+			 x[i] = shared[NT * i - NT * VT / 2 + tid];
 	__syncthreads();
 }
 

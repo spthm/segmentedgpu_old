@@ -168,7 +168,12 @@ SGPU_DEVICE void DeviceGlobalToGlobal(int count, InputIt source, int tid,
 // Transponse VT elements in NT threads (x) into thread-order registers (y)
 // using only NT * VT / 2 elements of shared memory.
 template<int NT, int VT, typename T>
-SGPU_DEVICE void HalfSmemTranspose(const T* x, int tid, T* shared, T* y);
+SGPU_DEVICE void HalfSmemRegToThread(const T* x, int tid, T* shared, T* y);
+
+// Transponse VT thread-order elements in NT threads (y) into registers (x)
+// using only NT * VT / 2 elements of shared memory.
+template<int NT, int VT, typename T>
+SGPU_DEVICE void HalfSmemThreadToReg(const T* y, int tid, T* shared, T* x);
 
 // For 0 <= i < VT:
 //		index = NT * i + tid;

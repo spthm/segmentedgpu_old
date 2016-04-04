@@ -74,7 +74,9 @@ SGPU_HOST void Scan(DataIt data_global, int count, T identity, Op op,
 	T* reduce_global, T* reduce_host, DestIt dest_global,
 	CudaContext& context);
 
-// Exclusive scan with identity = 0 and op = sgpu::plus<T>.
+// Exclusive scan, in-place, with identity = 0 and op = sgpu::plus<T>, where T
+// is
+//   typedef typename std::iterator_traits<InputIt>::value_type T;
 // Returns the total in host memory.
 template<typename InputIt, typename TotalType>
 SGPU_HOST void ScanExc(InputIt data_global, int count, TotalType* total,
@@ -104,7 +106,9 @@ SGPU_HOST void StreamScan(DataIt data_global, int count, T identity, Op op,
 	T* reduce_global, T* reduce_host, DestIt dest_global,
 	CudaContext& context);
 
-// Exclusive scan with identity = 0 and op = sgpu::plus<T>.
+// Exclusive scan, in-place, with identity = 0 and op = sgpu::plus<T>, where T
+// is
+//   typedef typename std::iterator_traits<InputIt>::value_type T;
 // Returns the total in host memory.
 template<typename InputIt, typename TotalType>
 SGPU_HOST void StreamScanExc(InputIt data_global, int count, TotalType* total,
@@ -271,13 +275,17 @@ SGPU_HOST void SegSortPairsFromIndices(KeyType* keys_global,
 
 
 ////////////////////////////////////////////////////////////////////////////////
-// kernels/segreducecsr.cuh
+// kernels/csrtools.cuh
 
-// SegCsrPreprocessData is defined in csrtools.cuh. It includes:
+// SegCsrPreprocessData includes:
 // -	limits for CSR->tiles
 // -	packed thread codes for each thread in the reduction
 // -	(optional) CSR2 array of filtered segment offsets
 struct SegCsrPreprocessData;
+
+
+////////////////////////////////////////////////////////////////////////////////
+// kernels/segreducecsr.cuh
 
 // SegReduceCsr runs a segmented reduction given an input and a sorted list of
 // segment start offsets. This implementation requires operators support
@@ -285,8 +293,7 @@ struct SegCsrPreprocessData;
 // evaluation.
 
 // In the segmented reduction, reduce-by-key, and Spmv documentation, "segment"
-// and "row" are used interchangably. A
-//
+// and "row" are used interchangably.
 
 // InputIt data_global		- Data value input.
 // int count				- Size of input array data_global.
@@ -301,6 +308,9 @@ struct SegCsrPreprocessData;
 //							  segments.
 //							  Set supportEmpty = true to add pre- and post-
 //							  processing to support empty segments.
+//							  For convenience, each empty segment contributes
+//                            one element to the output, which is set to
+//                            identity.
 // OutputIt dest_global		- Output array for segmented reduction. Allocate
 //							  numSegments elements. Should be same data type as
 //							  InputIt and identity.

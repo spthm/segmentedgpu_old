@@ -86,12 +86,12 @@ void TestCsrReduce(int count, int randomSize, int numIterations,
 	context.Start();
 	for(int it = 0; it < numIterations; ++it) {
 		if(TestTypeNormal == testType)
-			SegReduceCsr(dataDevice->get(), csrDevice->get(), count, numRows,
+			SegReduceCsr(dataDevice->get(), count, csrDevice->get(), numRows,
 				supportEmpty, resultsDevice->get(), (T)0, sgpu::plus<T>(),
 				context);
 		else if(TestTypeIndirect == testType)
-			IndirectReduceCsr(dataDevice->get(), csrDevice->get(),
-				sourcesDevice->get(), count, numRows, supportEmpty,
+			IndirectReduceCsr(dataDevice->get(), count, csrDevice->get(),
+				sourcesDevice->get(), numRows, supportEmpty,
 				resultsDevice->get(), (T)0, sgpu::plus<T>(), context);
 		else
 			SegReduceApply(*preprocessData, dataDevice->get(), (T)0,

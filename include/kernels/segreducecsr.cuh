@@ -252,7 +252,7 @@ SGPU_HOST void SegReduceHost(InputIt data_global, CsrIt csr_global,
 
 template<typename InputIt, typename CsrIt, typename OutputIt, typename T,
 	typename Op>
-SGPU_HOST void SegReduceCsr(InputIt data_global, CsrIt csr_global, int count,
+SGPU_HOST void SegReduceCsr(InputIt data_global, int count, CsrIt csr_global,
 	int numSegments, bool supportEmpty, OutputIt dest_global, T identity, Op op,
 	CudaContext& context) {
 
@@ -264,9 +264,10 @@ SGPU_HOST void SegReduceCsr(InputIt data_global, CsrIt csr_global, int count,
 
 template<typename InputIt, typename CsrIt, typename SourcesIt,
 	typename OutputIt, typename T, typename Op>
-SGPU_HOST void IndirectReduceCsr(InputIt data_global, CsrIt csr_global,
-	SourcesIt sources_global, int count, int numSegments, bool supportEmpty,
-	OutputIt dest_global, T identity, Op op, CudaContext& context) {
+SGPU_HOST void IndirectReduceCsr(InputIt data_global, int count,
+	CsrIt csr_global, SourcesIt sources_global, int numSegments,
+	bool supportEmpty, OutputIt dest_global, T identity, Op op,
+	CudaContext& context) {
 
 	typedef typename SegReduceIndirectTuning<sizeof(T)>::Tuning Tuning;
 
@@ -275,7 +276,7 @@ SGPU_HOST void IndirectReduceCsr(InputIt data_global, CsrIt csr_global,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// seg-reduce-csr preprocessed format.
+// seg-csr preprocessed format.
 
 template<typename T, typename CsrIt>
 SGPU_HOST void SegReduceCsrPreprocess(int count, CsrIt csr_global, int numSegments,
@@ -307,7 +308,6 @@ SGPU_LAUNCH_BOUNDS void KernelSegReduceApply(const int* threadCodes_global,
 		SegReduceLoad;
 
 	union Shared {
-		int csr[NV];
 		typename FastReduce::Storage reduceStorage;
 		typename SegReduce::Storage segReduceStorage;
 		typename SegReduceLoad::Storage loadStorage;
