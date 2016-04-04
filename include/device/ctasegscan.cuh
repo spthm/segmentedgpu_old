@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,8 +28,11 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
@@ -131,6 +135,85 @@ struct CTASegScan {
 		int tidDelta = DeviceFindSegScanDelta<NT>(tid, flag, storage.delta);
 
 		return SegScanDelta(tid, tidDelta, x, storage, carryOut, identity, op);
+	}
+};
+
+////////////////////////////////////////////////////////////////////////////////
+// CTASegScanStore
+// Store logic for segmented scan. Essentially the inverse of CTASegReduceLoad.
+// Supports direct and indirect stores.
+// Pass the scan data in thread order.
+
+template<int NT, int VT, bool HalfCapacity, typename T>
+struct CTASegScanStore {
+	enum {
+		NV = NT * VT,
+		Capacity = HalfCapacity ? (NV / 2) : NV
+	};
+
+	union Storage {
+		int sources[NV];
+		T data[Capacity];
+	};
+
+	// Store thread-order elements from multiple segments.
+	template<typename DestIt>
+	SGPU_DEVICE static void StoreDirect(int count2, int tid, int gid,
+		T data[VT], DestIt dest_global, Storage& storage) {
+
+		// Transpose data through shared memory.
+		T stridedData[VT];
+		if(HalfCapacity)
+			HalfSmemThreadToReg<NT, VT>(data, tid, storage.data, stridedData);
+		else {
+			DeviceThreadToShared<VT>(data, tid, storage.data);
+			DeviceSharedToReg<NT, VT>(storage.data, tid, stridedData);
+		}
+
+		DeviceRegToGlobal<NT, VT>(count2, stridedData, tid, dest_global + gid);
+	}
+
+	// Store thread-order elements from multiple segments.
+	template<typename DestIt, typename SourcesIt>
+	SGPU_DEVICE static void StoreIndirect(int count2, int tid, int gid,
+		int numSegments, int startSeg, const int segs[VT + 1],
+		const int segStarts[VT], T data[VT], SourcesIt sources_global,
+		DestIt dest_global, Storage& storage) {
+
+		// Load source offsets from sources_global into smem.
+		DeviceGlobalToSharedLoop<NT, VT>(numSegments, sources_global + startSeg,
+			tid, storage.sources);
+
+		// Compute the offset of each element within its segment.
+		int indices[VT];
+		#pragma unroll
+		for(int i = 0; i < VT; ++i) {
+			int index = VT * tid + i;
+			int segOffset = gid + index - segStarts[i];
+			int source = storage.sources[segs[i]];
+			indices[i] = (index < count2) ? (source + segOffset) : 0;
+		}
+		__syncthreads();
+
+		// Transpose indices through shared memory.
+		DeviceThreadToShared<VT>(indices, tid, storage.sources);
+		DeviceSharedToReg<NT, VT>(storage.sources, tid, indices);
+
+		// Transpose data through shared memory.
+		T stridedData[VT];
+		if(HalfCapacity)
+			HalfSmemThreadToReg<NT, VT>(data, tid, storage.data, stridedData);
+		else {
+			DeviceThreadToShared<VT>(data, tid, storage.data);
+			DeviceSharedToReg<NT, VT>(storage.data, tid, stridedData);
+		}
+
+		// Cooperatively store all data elements.
+		#pragma unroll
+		for(int i = 0; i < VT; ++i) {
+			int index = NT * i + tid;
+			if (index < count2) dest_global[indices[i]] = stridedData[i];
+		}
 	}
 };
 

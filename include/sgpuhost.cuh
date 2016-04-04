@@ -344,6 +344,8 @@ SGPU_HOST void IndirectReduceCsr(InputIt data_global, int count,
 // data with the same segment geometry. Partitioning and CSR->CSR2 transform is
 // off-loaded to a preprocessing pass. The actual reduction is evaluated by
 // SegReduceApply.
+// The resulting SegCsrPreprocessData object is not compatible with SegScanApply
+// because they use different Tuning.
 template<typename T, typename CsrIt>
 SGPU_HOST void SegReduceCsrPreprocess(int count, CsrIt csr_global,
 	int numSegments, bool supportEmpty,
@@ -353,6 +355,114 @@ template<typename InputIt, typename DestIt, typename T, typename Op>
 SGPU_HOST void SegReduceApply(const SegCsrPreprocessData& preprocess,
 	InputIt data_global, T identity, Op op, DestIt dest_global,
 	CudaContext& context);
+
+
+////////////////////////////////////////////////////////////////////////////////
+// kernels/segscancsr.cuh
+
+// SegScanCsr runs a segmented scan given an input and a sorted list of
+// segment start offsets. This implementation requires operators support
+// commutative (a + b = b + a) and associative (a + (b + c) = (a + b) + c)
+// evaluation.
+
+// SgpuScanType may be:
+//		SgpuScanTypeExc (exclusive) or
+//		SgpuScanTypeInc (inclusive).
+
+// In the segmented scan and scan-by-key documentation, "segment" and "row" are
+// used interchangably.
+
+// InputIt data_global		- Data value input.
+// int count				- Size of input array data_global.
+// CsrIt csr_global			- List of integers for start of each segment.
+//							  The first entry must be 0 (indicating that the
+//							  first segment starts at offset 0).
+//							  Equivalent to exc-scan of segment sizes.
+//							  If supportEmpty is false: must be ascending.
+//							  If supportEmpty is true: must be non-descending.
+// int numSegments			- Size of segment list csr_global. Must be >= 1.
+// bool supportEmpty		- Basic seg-scan code does not support empty
+//							  segments.
+//							  Set supportEmpty = true to add pre-processing to
+//                            support empty segments.
+//                            Note that empty segments contribute no elements to
+//                            the output, but that this flag must be set to true
+//                            if empty segments are present, otherwise the
+//                            output will not be correct.
+// OutputIt dest_global		- Output array for segmented scan. Allocate
+//							  numSegments elements. Should be same data type as
+//							  InputIt and identity.
+// T identity				- Identity for reduction operation. Eg, use 0 for
+//							  addition or 1 for multiplication.
+// Op op					- Reduction operator. Model on std::plus<>. SGPU
+//							  provides operators sgpu::plus<>, minus<>,
+//							  multiplies<>, modulus<>, bit_or<> bit_and<>,
+//							  bit_xor<>, maximum<>, and minimum<>.
+// CudaContext& context		- SGPU context support object. All kernels are
+//							  launched on the associated stream.
+template<SgpuScanType Type, typename InputIt, typename CsrIt, typename OutputIt,
+	typename T,	typename Op>
+SGPU_HOST void SegScanCsr(InputIt data_global, int count, CsrIt csr_global,
+	int numSegments, bool supportEmpty, OutputIt dest_global, T identity, Op op,
+	CudaContext& context);
+
+// Exclusive scan, in-place, with identity = 0 and op = sgpu::plus<T>, where T
+// is
+//   typedef typename std::iterator_traits<InputIt>::value_type T;
+template<typename InputIt, typename CsrIt>
+SGPU_HOST void SegScanCsrExc(InputIt data_global, int count, CsrIt csr_global,
+	int numSegments, bool supportEmpty, CudaContext& context);
+
+// IndirectScanCsr is like SegScanCsr but with one level of source
+// indirection. The start of each segment/row i in data_global starts at
+// sources_global[i].
+// SourcesIt sources_global	- List of integers for source data of each segment.
+//							  Must be numSegments in size.
+//
+// FIXME
+//
+// template<SgpuScanType Type, typename InputIt, typename CsrIt,
+// 	typename SourcesIt,	typename OutputIt, typename T, typename Op>
+// SGPU_HOST void IndirectScanCsr(InputIt data_global, int count,
+// 	CsrIt csr_global, SourcesIt sources_global, int numSegments,
+// 	bool supportEmpty, OutputIt dest_global, T identity, Op op,
+// 	CudaContext& context);
+
+// Exclusive scan, in-place, with identity = 0 and op = sgpu::plus<T>, where T
+// is
+//   typedef typename std::iterator_traits<InputIt>::value_type T;
+//
+// FIXME
+//
+// template<typename InputIt, typename CsrIt, typename SourcesIt>
+// SGPU_HOST void IndirectScanCsrExc(InputIt data_global, int count,
+// 	CsrIt csr_global, SourcesIt sources_global, int numSegments,
+// 	bool supportEmpty, CudaContext& context);
+
+// SegScanCsrPreprocess accelerates multiple seg-scan calls on different
+// data with the same segment geometry. Partitioning and CSR->CSR2 transform is
+// off-loaded to a preprocessing pass. The actual scan is evaluated by
+// SegScanApply.
+// The resulting SegCsrPreprocessData object is not compatible with
+// SegReduceApply because they may use different Tuning.
+template<typename T, typename CsrIt>
+SGPU_HOST void SegScanCsrPreprocess(int count, CsrIt csr_global,
+	int numSegments, bool supportEmpty,
+	std::auto_ptr<SegCsrPreprocessData>* ppData, CudaContext& context);
+
+template<SgpuScanType Type, typename InputIt, typename DestIt, typename T,
+	typename Op>
+SGPU_HOST void SegScanApply(const SegCsrPreprocessData& preprocess,
+	InputIt data_global, T identity, Op op, DestIt dest_global,
+	CudaContext& context);
+
+// Exclusive scan, in-place, with identity = 0 and op = sgpu::plus<T>, where T
+// is
+//   typedef typename std::iterator_traits<InputIt>::value_type T;
+template<typename InputIt>
+SGPU_HOST void SegScanApplyExc(const SegCsrPreprocessData& preprocess,
+	InputIt data_global, CudaContext& context);
+
 
 } // namespace sgpu
 
