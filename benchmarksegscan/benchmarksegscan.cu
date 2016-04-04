@@ -220,7 +220,7 @@ int main(int argc, char** argv) {
     ContextPtr context = CreateCudaDevice(argc, argv, true);
 
     bool supportEmpty = false;
-    TestType testType = TestTypePreprocess;
+    TestType testType = TestTypeNormal;
 
     BenchmarkSegScan1<float>(testType, supportEmpty, *context);
     BenchmarkSegScan1<double>(testType, supportEmpty, *context);
