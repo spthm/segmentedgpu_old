@@ -3,6 +3,7 @@ benchmarklaunchbox/benchmarklaunchbox
 benchmarkmerge/benchmarkmerge
 benchmarkscan/benchmarkscan
 benchmarksegreduce/benchmarksegreduce
+benchmarksegscan/benchmarksegscan
 benchmarksegsort/benchmarksegsort
 benchmarksort/benchmarksort
 testlaunchbox/testlaunchbox
