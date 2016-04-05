@@ -131,12 +131,12 @@ SGPU_LAUNCH_BOUNDS void KernelStreamScan(DataIt data_global, int count,
 		// Coalesced load of rCount items into thread-order registers.
 		T data[rVT];
 		DeviceGlobalToSharedDefault<NT, rVT>(rCount, data_global + gid, tid,
-            sm_data, identity);
+			sm_data, identity);
 		DeviceSharedToThread<rVT>(sm_data, tid, data); // syncs
 
 		// Coalesced load of sCount items into shared memory.
 		DeviceGlobalToSharedDefault<NT, sVT>(sCount,
-        	data_global + gid + rCount, tid, sm_data, identity); // syncs
+			data_global + gid + rCount, tid, sm_data, identity); // syncs
 
 		T* shared_data = sm_data + sVT * tid;
 
@@ -157,7 +157,7 @@ SGPU_LAUNCH_BOUNDS void KernelStreamScan(DataIt data_global, int count,
 			SgpuScanTypeExc, identity, op);
 		T sTotal;
 		T sScan = Scan::Scan(tid, s, shared.scanStorage, &sTotal,
-	    	SgpuScanTypeExc, identity, op);
+			SgpuScanTypeExc, identity, op);
 
 		// Wait until the block processing the preceeding tile's reduction has
 		// completed.
