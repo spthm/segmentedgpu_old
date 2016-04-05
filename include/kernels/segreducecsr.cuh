@@ -80,7 +80,7 @@ struct SegReduceIndirectTuning {
 
 template<typename Tuning, bool Indirect, typename CsrIt, typename SourcesIt,
 	typename InputIt, typename DestIt, typename T, typename Op>
-SGPU_LAUNCH_BOUNDS void KernelSegReduceCsr(CsrIt csr_global,
+SGPU_LAUNCH_BOUNDS void KernelSegReduceCsr(int numTiles, CsrIt csr_global,
 	SourcesIt sources_global, int count, const int* limits_global,
 	InputIt data_global, T identity, Op op, DestIt dest_global,
 	T* carryOut_global) {
@@ -107,75 +107,80 @@ SGPU_LAUNCH_BOUNDS void KernelSegReduceCsr(CsrIt csr_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int limit0 = limits_global[block];
-	int limit1 = limits_global[block + 1];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	SegReduceRange range;
-	SegReduceTerms terms;
-	int segs[VT + 1], segStarts[VT];
-	T data[VT];
-	if(Indirect) {
-		// Indirect load. We need to load the CSR terms before loading any data.
-		range = DeviceShiftRange(limit0, limit1);
-		int numSegments = range.end - range.begin;
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-		if(range.total) {
+		int limit0 = limits_global[block];
+		int limit1 = limits_global[block + 1];
 
-			// Load the CSR interval.
-			DeviceGlobalToSharedLoop<NT, VT>(numSegments,
-				csr_global + range.begin, tid, shared.csr);
+		SegReduceRange range;
+		SegReduceTerms terms;
+		int segs[VT + 1], segStarts[VT];
+		T data[VT];
+		if(Indirect) {
+			// Indirect load. We need to load the CSR terms before loading any data.
+			range = DeviceShiftRange(limit0, limit1);
+			int numSegments = range.end - range.begin;
 
-			// Compute the segmented scan terms.
-			terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
-				tid, gid, range.flushLast, segs, segStarts);
+			if(range.total) {
 
-			// Load tile of data in thread order from segment IDs.
-			SegReduceLoad::LoadIndirect(count2, tid, gid, numSegments,
-				range.begin, segs, segStarts, data_global, sources_global,
-				identity, data, shared.loadStorage);
+				// Load the CSR interval.
+				DeviceGlobalToSharedLoop<NT, VT>(numSegments,
+					csr_global + range.begin, tid, shared.csr);
+
+				// Compute the segmented scan terms.
+				terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
+					tid, gid, range.flushLast, segs, segStarts);
+
+				// Load tile of data in thread order from segment IDs.
+				SegReduceLoad::LoadIndirect(count2, tid, gid, numSegments,
+					range.begin, segs, segStarts, data_global, sources_global,
+					identity, data, shared.loadStorage);
+			} else {
+				SegReduceLoad::LoadIndirectFast(tid, gid, range.begin,
+					csr_global, data_global, sources_global, data,
+					shared.loadStorage);
+			}
+
 		} else {
-			SegReduceLoad::LoadIndirectFast(tid, gid, range.begin, csr_global,
-				data_global, sources_global, data, shared.loadStorage);
+			// Direct load. It is more efficient to load the full tile before
+			// dealing with data dependencies.
+			SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity,
+				data, shared.loadStorage);
+
+			range = DeviceShiftRange(limit0, limit1);
+			int numSegments = range.end - range.begin;
+
+			if(range.total) {
+				// Load the CSR interval.
+				DeviceGlobalToSharedLoop<NT, VT>(numSegments,
+					csr_global + range.begin, tid, shared.csr);
+
+				// Compute the segmented scan terms.
+				terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
+					tid, gid, range.flushLast, segs, segStarts);
+			}
 		}
-
-	} else {
-		// Direct load. It is more efficient to load the full tile before
-		// dealing with data dependencies.
-		SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity,
-			data, shared.loadStorage);
-
-		range = DeviceShiftRange(limit0, limit1);
-		int numSegments = range.end - range.begin;
 
 		if(range.total) {
-			// Load the CSR interval.
-			DeviceGlobalToSharedLoop<NT, VT>(numSegments,
-				csr_global + range.begin, tid, shared.csr);
-
-			// Compute the segmented scan terms.
-			terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
-				tid, gid, range.flushLast, segs, segStarts);
+			// Reduce tile data and store to dest_global. Write tile's carry-out
+			// term to carryOut_global.
+			SegReduce::ReduceToGlobal(segs, range.total, terms.tidDelta,
+				range.begin, block, tid, data, dest_global, carryOut_global,
+				identity, op, shared.segReduceStorage);
+		} else {
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i)
+				x = i ? op(x, data[i]) : data[i];
+			x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
+			if(!tid)
+				carryOut_global[block] = x;
 		}
-	}
-
-	if(range.total) {
-		// Reduce tile data and store to dest_global. Write tile's carry-out
-		// term to carryOut_global.
-		SegReduce::ReduceToGlobal(segs, range.total, terms.tidDelta,
-			range.begin, block, tid, data, dest_global, carryOut_global,
-			identity, op, shared.segReduceStorage);
-	} else {
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i)
-			x = i ? op(x, data[i]) : data[i];
-		x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
-		if(!tid)
-			carryOut_global[block] = x;
 	}
 }
 
@@ -194,22 +199,24 @@ SGPU_HOST void SegReduceInner(InputIt data_global, CsrIt csr_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 	int NV = launch.x * launch.y;
 
-	int numBlocks = SGPU_DIV_UP(count, NV);
+	int numTiles = SGPU_DIV_UP(count, NV);
 
 	// Use upper-bound binary search to partition the CSR structure into tiles.
 	SGPU_MEM(int) limitsDevice = PartitionCsrPlus(count, NV, csr_global,
-		numSegments, numSegments2_global, numBlocks + 1, context);
+		numSegments, numSegments2_global, numTiles + 1, context);
 
 	// Segmented reduction without source intervals.
-	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numBlocks);
+	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numTiles);
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(numTiles, maxBlocks);
 	KernelSegReduceCsr<Tuning, Indirect>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(csr_global,
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(numTiles, csr_global,
 		sources_global, count, limitsDevice->get(), data_global, identity, op,
 		dest_global, carryOutDevice->get());
 	SGPU_SYNC_CHECK("KernelSegReduceCsr");
 
 	// Add carry-in values.
-	SegReduceSpine(limitsDevice->get(), numBlocks, dest_global,
+	SegReduceSpine(limitsDevice->get(), numTiles, dest_global,
 		carryOutDevice->get(), identity, op, context);
 }
 
@@ -290,9 +297,10 @@ SGPU_HOST void SegReduceCsrPreprocess(int count, CsrIt csr_global, int numSegmen
 
 template<typename Tuning, typename InputIt, typename DestIt, typename T,
 	typename Op>
-SGPU_LAUNCH_BOUNDS void KernelSegReduceApply(const int* threadCodes_global,
-	int count, const int* limits_global, InputIt data_global, T identity,
-	Op op, DestIt dest_global, T* carryOut_global) {
+SGPU_LAUNCH_BOUNDS void KernelSegReduceApply(int numTiles,
+	const int* threadCodes_global, int count, const int* limits_global,
+	InputIt data_global, T identity, Op op, DestIt dest_global,
+	T* carryOut_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
 	typedef typename Op::first_argument_type OpT;
@@ -315,42 +323,46 @@ SGPU_LAUNCH_BOUNDS void KernelSegReduceApply(const int* threadCodes_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int limit0 = limits_global[block];
-	int limit1 = limits_global[block + 1];
-	int threadCodes = threadCodes_global[NT * block + tid];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	// Load the data and transpose into thread order.
-	T data[VT];
-	SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity, data,
-		shared.loadStorage);
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-	// Compute the range.
-	SegReduceRange range = DeviceShiftRange(limit0, limit1);
+		int limit0 = limits_global[block];
+		int limit1 = limits_global[block + 1];
+		int threadCodes = threadCodes_global[NT * block + tid];
 
-	if(range.total) {
-		// Expand the segment indices.
-		int segs[VT + 1];
-		DeviceExpandFlagsToRows<VT>(threadCodes>> 20, threadCodes, segs);
+		// Load the data and transpose into thread order.
+		T data[VT];
+		SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity, data,
+			shared.loadStorage);
 
-		// Reduce tile data and store to dest_global. Write tile's carry-out
-		// term to carryOut_global.
-		int tidDelta = 0x7f & (threadCodes>> 13);
-		SegReduce::ReduceToGlobal(segs, range.total, tidDelta, range.begin,
-			block, tid, data, dest_global, carryOut_global, identity, op,
-			shared.segReduceStorage);
-	} else {
-		// If there are no end flags in this CTA, use a fast reduction.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i)
-			x = i ? op(x, data[i]) : data[i];
-		x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
-		if(!tid)
-			carryOut_global[block] = x;
+		// Compute the range.
+		SegReduceRange range = DeviceShiftRange(limit0, limit1);
+
+		if(range.total) {
+			// Expand the segment indices.
+			int segs[VT + 1];
+			DeviceExpandFlagsToRows<VT>(threadCodes>> 20, threadCodes, segs);
+
+			// Reduce tile data and store to dest_global. Write tile's carry-out
+			// term to carryOut_global.
+			int tidDelta = 0x7f & (threadCodes>> 13);
+			SegReduce::ReduceToGlobal(segs, range.total, tidDelta, range.begin,
+				block, tid, data, dest_global, carryOut_global, identity, op,
+				shared.segReduceStorage);
+		} else {
+			// If there are no end flags in this CTA, use a fast reduction.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i)
+				x = i ? op(x, data[i]) : data[i];
+			x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
+			if(!tid)
+				carryOut_global[block] = x;
+		}
 	}
 }
 
@@ -362,19 +374,22 @@ SGPU_HOST void SegReduceApply(const SegCsrPreprocessData& preprocess,
 	typedef typename SegReducePreprocessTuning<sizeof(T)>::Tuning Tuning;
 	int2 launch = Tuning::GetLaunchParams(context);
 
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(preprocess.numTiles, maxBlocks);
+
 	if(preprocess.csr2Device.get()) {
 		// Support empties.
 		SGPU_MEM(T) tempOutDevice = context.Malloc<T>(preprocess.numSegments2);
-		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numBlocks);
+		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numTiles);
 		KernelSegReduceApply<Tuning>
-			<<<preprocess.numBlocks, launch.x, 0, context.Stream()>>>(
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(preprocess.numTiles,
 			preprocess.threadCodesDevice->get(), preprocess.count,
 			preprocess.limitsDevice->get(), data_global, identity, op,
 			tempOutDevice->get(), carryOutDevice->get());
 		SGPU_SYNC_CHECK("KernelSegReduceApply");
 
 		// Add the carry-in values.
-		SegReduceSpine(preprocess.limitsDevice->get(), preprocess.numBlocks,
+		SegReduceSpine(preprocess.limitsDevice->get(), preprocess.numTiles,
 			tempOutDevice->get(), carryOutDevice->get(), identity, op, context);
 
 		// Insert identity into the empty segments and stream into dest_global.
@@ -385,16 +400,16 @@ SGPU_HOST void SegReduceApply(const SegCsrPreprocessData& preprocess,
 			context);
 	} else {
 		// No empties.
-		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numBlocks);
+		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numTiles);
 		KernelSegReduceApply<Tuning>
-			<<<preprocess.numBlocks, launch.x, 0, context.Stream()>>>(
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(preprocess.numTiles,
 			preprocess.threadCodesDevice->get(), preprocess.count,
 			preprocess.limitsDevice->get(), data_global, identity, op,
 			dest_global, carryOutDevice->get());
 		SGPU_SYNC_CHECK("KernelSegReduceApply");
 
 		// Add the carry-in values.
-		SegReduceSpine(preprocess.limitsDevice->get(), preprocess.numBlocks,
+		SegReduceSpine(preprocess.limitsDevice->get(), preprocess.numTiles,
 			dest_global, carryOutDevice->get(), identity, op, context);
 	}
 }

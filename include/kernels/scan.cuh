@@ -131,8 +131,9 @@ SGPU_LAUNCH_BOUNDS void KernelScanParallel(DataIt data_global, int count,
 
 template<typename Tuning, SgpuScanType Type, typename DataIt, typename OutputIt,
 	typename T, typename Op>
-SGPU_LAUNCH_BOUNDS void KernelScanDownsweep(DataIt data_global, int count,
-	const T* reduction_global, T identity, Op op, OutputIt dest_global) {
+SGPU_LAUNCH_BOUNDS void KernelScanDownsweep(int numTiles, DataIt data_global,
+	int count, const T* reduction_global, T identity, Op op,
+	OutputIt dest_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
 	const int NT = Params::NT;
@@ -143,16 +144,20 @@ SGPU_LAUNCH_BOUNDS void KernelScanDownsweep(DataIt data_global, int count,
 	__shared__ typename TileScan::Storage tileScanStorage;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	// Load the reduction of the previous tiles.
-	T start = reduction_global[block];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	// Scan from data_global into dest_global.
-	TileScan::DeviceScanTile<Type>(data_global + gid, count2, tid,
-		identity, op, start, dest_global + gid, tileScanStorage);
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
+
+		// Load the reduction of the previous tiles.
+		T start = reduction_global[block];
+
+		// Scan from data_global into dest_global.
+		TileScan::DeviceScanTile<Type>(data_global + gid, count2, tid,
+			identity, op, start, dest_global + gid, tileScanStorage);
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -195,22 +200,25 @@ SGPU_HOST void Scan(DataIt data_global, int count, T identity, Op op,
 		> Tuning;
 		int2 launch = Tuning::GetLaunchParams(context);
 		int NV = launch.x * launch.y;
-		int numBlocks = SGPU_DIV_UP(count, NV);
-		SGPU_MEM(T) reduceDevice = context.Malloc<T>(numBlocks + 1);
+		int numTiles = SGPU_DIV_UP(count, NV);
+		SGPU_MEM(T) reduceDevice = context.Malloc<T>(numTiles + 1);
+
+		int maxBlocks = context.MaxGridSize();
+		int numBlocks = min(numTiles, maxBlocks);
 
 		// Reduce tiles into reduceDevice.
 		KernelReduce<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(
-			data_global, count, identity, op, reduceDevice->get());
+			numTiles, data_global, count, identity, op, reduceDevice->get());
 		SGPU_SYNC_CHECK("KernelReduce");
 
 		// Recurse to scan the reductions.
-		Scan<SgpuScanTypeExc>(reduceDevice->get(), numBlocks, identity, op,
+		Scan<SgpuScanTypeExc>(reduceDevice->get(), numTiles, identity, op,
 			 reduce_global, (T*)0, reduceDevice->get(), context);
 
 		// Add scanned reductions back into output and scan.
 		KernelScanDownsweep<Tuning, Type>
-			<<<numBlocks, launch.x, 0, context.Stream()>>>(data_global, count,
-			reduceDevice->get(), identity, op, dest_global);
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(numTiles,
+			data_global, count, reduceDevice->get(), identity, op, dest_global);
 		SGPU_SYNC_CHECK("KernelScanDownsweep");
 	}
 	if(reduce_host)

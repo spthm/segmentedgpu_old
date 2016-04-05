@@ -120,6 +120,7 @@ public:
 	// LaunchBox properties.
 	int PTXVersion() const { return _ptxVersion; }
 
+	int MaxGridSize() const { return _prop.maxGridSize[0]; }
 	template<typename T>
 	int MaxActiveBlocks(T kernel, int blockSize, size_t dynamicSMemSize = 0) const {
 		int maxBlocksPerSM;
@@ -284,6 +285,7 @@ public:
 	int ArchVersion() { return Device().ArchVersion(); }
 	int PTXVersion() { return Device().PTXVersion(); }
 
+	int MaxGridSize() { return Device().MaxGridSize(); }
 	template<typename T>
 	int MaxActiveBlocks(T kernel, size_t dynamicSMemSize = 0) {
 		return Device().MaxActiveBlocks(kernel, dynamicSMemSize);

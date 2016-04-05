@@ -49,6 +49,7 @@ namespace sgpu {
 // A final pair of spine-reducers scan carryOut_global and add it into
 // carryIn_global.
 
+// Not tolerant to large block sizes, but do not expect them.
 template<int NT, typename T, typename Op>
 __global__ void KernelSegScanSpine1(const int* limits_global, int count,
 	T identity, Op op, T* carryIn_global, T* carryOut_global) {
@@ -92,7 +93,7 @@ __global__ void KernelSegScanSpine1(const int* limits_global, int count,
 // in-place.
 
 template<int NT, typename T, typename Op>
-__global__ void KernelSegScanSpine2a(const int* limits_global, int numBlocks,
+__global__ void KernelSegScanSpine2a(const int* limits_global, int numTiles,
 	int count, int spine1NV, T identity, Op op,	T* carryIn2_global) {
 
 	typedef CTASegScan<NT, Op> SegScan;
@@ -105,7 +106,7 @@ __global__ void KernelSegScanSpine2a(const int* limits_global, int numBlocks,
 
 	int tid = threadIdx.x;
 
-	for(int i = 0; i < numBlocks; i += NT) {
+	for(int i = 0; i < numTiles; i += NT) {
 		int bid = (i + tid);
 		int gid = bid * spine1NV;
 
@@ -114,7 +115,7 @@ __global__ void KernelSegScanSpine2a(const int* limits_global, int numBlocks,
 			(0x7fffffff & limits_global[gid]) : INT_MAX;
 		int row2 = (gid + spine1NV < count) ?
 			(0x7fffffff & limits_global[gid + spine1NV]) : INT_MAX;
-		T carryIn2 = (bid < numBlocks) ? carryIn2_global[bid] : identity;
+		T carryIn2 = (bid < numTiles) ? carryIn2_global[bid] : identity;
 
 		// Run a segmented scan of the carry-in values.
 		bool endFlag = row != row2;
@@ -128,7 +129,7 @@ __global__ void KernelSegScanSpine2a(const int* limits_global, int numBlocks,
 		carryIn2_global[bid] = x;
 
 		// Set the carry-in for the next loop iteration.
-		if(i + NT < numBlocks) {
+		if(i + NT < numTiles) {
 			__syncthreads();
 			if(i > 0) {
 				// Add in the previous carry-in.
@@ -153,6 +154,7 @@ __global__ void KernelSegScanSpine2a(const int* limits_global, int numBlocks,
 // For each per-tile carry in in carryIn_global, add-in the corresponding
 // carry in from carryIn2_global, if it corresponds to the same row, or segment.
 
+// Not tolerant to large block sizes, but do not expect them.
 template<int NT, typename T, typename Op>
 __global__ void KernelSegScanSpine2b(const int* limits_global, int count,
 	int spine1NV, const T* carryIn2_global, Op op, T* carryIn_global) {
@@ -191,28 +193,28 @@ SGPU_HOST void SegScanSpine(const int* limits_global, int count,
 	T* carryIn_global, T identity, Op op, CudaContext& context) {
 
 	const int NT = 128;
-	int numBlocks = SGPU_DIV_UP(count, NT);
+	int numTiles = SGPU_DIV_UP(count, NT);
 
 	// Fix-up the segment outputs between the original tiles by performing a
 	// segmented, exclusive in-place scan of the original tiles' carry-out.
-	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numBlocks);
-	KernelSegScanSpine1<NT><<<numBlocks, NT, 0, context.Stream()>>>(
+	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numTiles);
+	KernelSegScanSpine1<NT><<<numTiles, NT, 0, context.Stream()>>>(
 		limits_global, count, identity, op, carryIn_global,
 		carryOutDevice->get());
 	SGPU_SYNC_CHECK("KernelSegScanSpine1");
 
 	// Loop over the segments that span the blocks of KernelSegScanSpine1 and
 	// similarly fix those.
-	if(numBlocks > 1) {
+	if(numTiles > 1) {
 		// convert carryOutDevice, in-place, to a carry-In.
 		KernelSegScanSpine2a<NT><<<1, NT, 0, context.Stream()>>>(
-			limits_global, numBlocks, count, NT, identity, op,
+			limits_global, numTiles, count, NT, identity, op,
 			carryOutDevice->get());
 		SGPU_SYNC_CHECK("KernelSegScanSpine2a");
 
 		// Apply elements of carryOutDevice to their corresponding per-tile
 		// elements in carryIn_global.
-		KernelSegScanSpine2b<NT><<<numBlocks, NT, 0, context.Stream()>>>(
+		KernelSegScanSpine2b<NT><<<numTiles, NT, 0, context.Stream()>>>(
 			limits_global, count, NT, carryOutDevice->get(), op,
 			carryIn_global);
 		SGPU_SYNC_CHECK("KernelSegScanSpine2b");

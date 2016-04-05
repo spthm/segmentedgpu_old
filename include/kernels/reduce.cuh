@@ -43,8 +43,8 @@ namespace sgpu {
 // KernelReduce
 
 template<typename Tuning, typename InputIt, typename T, typename Op>
-SGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count,
-	T identity, Op op, T* reduction_global) {
+SGPU_LAUNCH_BOUNDS void KernelReduce(int numTiles, InputIt data_global,
+	int count, T identity, Op op, T* reduction_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
 	typedef typename Op::first_argument_type OpT;
@@ -59,28 +59,32 @@ SGPU_LAUNCH_BOUNDS void KernelReduce(InputIt data_global, int count,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	// Load a full tile into register in strided order. Set out-of-range values
-	// with identity.
-	OpT data[VT];
-	DeviceGlobalToRegDefault<NT, VT>(count2, data_global + gid, tid, data,
-		identity);
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	// Sum elements within each thread.
-	OpT x;
-	#pragma unroll
-	for(int i = 0; i < VT; ++i)
-		x = i ? op(x, data[i]) : data[i];
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-	// Sum thread-totals over the CTA.
-	x = R::Reduce(tid, x, shared.reduceStorage, op);
+		// Load a full tile into register in strided order. Set out-of-range values
+		// with identity.
+		OpT data[VT];
+		DeviceGlobalToRegDefault<NT, VT>(count2, data_global + gid, tid, data,
+			identity);
 
-	// Store the tile's reduction to global memory.
-	if(!tid)
-		reduction_global[block] = x;
+		// Sum elements within each thread.
+		OpT x;
+		#pragma unroll
+		for(int i = 0; i < VT; ++i)
+			x = i ? op(x, data[i]) : data[i];
+
+		// Sum thread-totals over the CTA.
+		x = R::Reduce(tid, x, shared.reduceStorage, op);
+
+		// Store the tile's reduction to global memory.
+		if(!tid)
+			reduction_global[block] = x;
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -99,19 +103,19 @@ SGPU_HOST void Reduce(InputIt data_global, int count, T identity, Op op,
 	if(count <= 256) {
 		typedef LaunchBoxVT<256, 1> Tuning;
 		KernelReduce<Tuning><<<1, 256, 0, context.Stream()>>>(
-			data_global, count, identity, op, reduce_global);
+			1, data_global, count, identity, op, reduce_global);
 		SGPU_SYNC_CHECK("KernelReduce");
 
 	} else if(count <= 768) {
 		typedef LaunchBoxVT<256, 3> Tuning;
 		KernelReduce<Tuning><<<1, 256, 0, context.Stream()>>>(
-			data_global, count, identity, op, reduce_global);
+			1, data_global, count, identity, op, reduce_global);
 		SGPU_SYNC_CHECK("KernelReduce");
 
 	} else if(count <= 512 * ((sizeof(T) > 4) ? 4 : 8)) {
 		typedef LaunchBoxVT<512, (sizeof(T) > 4) ? 4 : 8> Tuning;
 		KernelReduce<Tuning><<<1, 512, 0, context.Stream()>>>(
-			data_global, count, identity, op, reduce_global);
+			1, data_global, count, identity, op, reduce_global);
 		SGPU_SYNC_CHECK("KernelReduce");
 
 	} else {
@@ -119,14 +123,16 @@ SGPU_HOST void Reduce(InputIt data_global, int count, T identity, Op op,
 		typedef LaunchBoxVT<256, (sizeof(T) > 4) ? 8 : 16> Tuning;
 		int2 launch = Tuning::GetLaunchParams(context);
 		int NV = launch.x * launch.y;
-		int numBlocks = SGPU_DIV_UP(count, NV);
+		int numTiles = SGPU_DIV_UP(count, NV);
+		int maxBlocks = context.MaxGridSize();
+		int numBlocks = min(numTiles, maxBlocks);
 
-		SGPU_MEM(T) reduceDevice = context.Malloc<T>(numBlocks);
+		SGPU_MEM(T) reduceDevice = context.Malloc<T>(numTiles);
 		KernelReduce<Tuning><<<numBlocks, launch.x, 0, context.Stream()>>>(
-			data_global, count, identity, op, reduceDevice->get());
+			numTiles, data_global, count, identity, op, reduceDevice->get());
 		SGPU_SYNC_CHECK("KernelReduce");
 
-		Reduce(reduceDevice->get(), numBlocks, identity, op, reduce_global,
+		Reduce(reduceDevice->get(), numTiles, identity, op, reduce_global,
 			(T*)0, context);
 	}
 

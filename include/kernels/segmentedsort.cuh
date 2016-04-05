@@ -46,10 +46,11 @@ namespace sgpu {
 
 template<typename Tuning, bool Stable, bool HasValues, typename InputIt1,
 	typename InputIt2, typename OutputIt1, typename OutputIt2, typename Comp>
-SGPU_LAUNCH_BOUNDS void KernelSegBlocksortIndices(InputIt1 keys_global,
-	InputIt2 values_global, int count, const int* indices_global,
-	const int* partitions_global, OutputIt1 keysDest_global,
-	OutputIt2 valsDest_global, int* ranges_global, Comp comp) {
+SGPU_LAUNCH_BOUNDS void KernelSegBlocksortIndices(int numTiles,
+	InputIt1 keys_global, InputIt2 values_global, int count,
+	const int* indices_global, const int* partitions_global,
+	OutputIt1 keysDest_global, OutputIt2 valsDest_global, int* ranges_global,
+	Comp comp) {
 
 	typedef typename std::iterator_traits<InputIt1>::value_type KeyType;
 	typedef typename std::iterator_traits<InputIt2>::value_type ValType;
@@ -71,16 +72,20 @@ SGPU_LAUNCH_BOUNDS void KernelSegBlocksortIndices(InputIt1 keys_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int headFlags = DeviceIndicesToHeadFlags<NT, VT>(indices_global,
-		partitions_global, tid, block, count2, shared.words, shared.flags);
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	DeviceSegBlocksort<NT, VT, Stable, HasValues>(keys_global, values_global,
-		count2, shared.keys, shared.values, shared.ranges, headFlags, tid,
-		block, keysDest_global, valsDest_global, ranges_global, comp);
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
+
+		int headFlags = DeviceIndicesToHeadFlags<NT, VT>(indices_global,
+			partitions_global, tid, block, count2, shared.words, shared.flags);
+
+		DeviceSegBlocksort<NT, VT, Stable, HasValues>(keys_global, values_global,
+			count2, shared.keys, shared.values, shared.ranges, headFlags, tid,
+			block, keysDest_global, valsDest_global, ranges_global, comp);
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -88,10 +93,10 @@ SGPU_LAUNCH_BOUNDS void KernelSegBlocksortIndices(InputIt1 keys_global,
 
 template<typename Tuning, bool Stable, bool HasValues, typename InputIt1,
 	typename InputIt2, typename OutputIt1, typename OutputIt2, typename Comp>
-SGPU_LAUNCH_BOUNDS void KernelSegBlocksortFlags(InputIt1 keys_global,
-	InputIt2 values_global, int count, const uint* flags_global,
-	OutputIt1 keysDest_global, OutputIt2 valsDest_global, int* ranges_global,
-	Comp comp) {
+SGPU_LAUNCH_BOUNDS void KernelSegBlocksortFlags(int numTiles,
+	InputIt1 keys_global, InputIt2 values_global, int count,
+	const uint* flags_global, OutputIt1 keysDest_global,
+	OutputIt2 valsDest_global, int* ranges_global, Comp comp) {
 
 	typedef typename std::iterator_traits<InputIt1>::value_type KeyType;
 	typedef typename std::iterator_traits<InputIt2>::value_type ValType;
@@ -112,27 +117,32 @@ SGPU_LAUNCH_BOUNDS void KernelSegBlocksortFlags(InputIt1 keys_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	// Load the head flags and keys.
-	int flagsToLoad = min(32, count2 - 32 * tid);
-	uint flags = 0xffffffff;
-	if(flagsToLoad > 0) {
-		flags = flags_global[(NV / 32) * block + tid];
-		if(flagsToLoad < 32)
-			flags |= 0xffffffff<< (31 & count2);
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
+
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
+
+		// Load the head flags and keys.
+		int flagsToLoad = min(32, count2 - 32 * tid);
+		uint flags = 0xffffffff;
+		if(flagsToLoad > 0) {
+			flags = flags_global[(NV / 32) * block + tid];
+			if(flagsToLoad < 32)
+				flags |= 0xffffffff<< (31 & count2);
+		}
+		shared.flags[tid] = flags;
+		__syncthreads();
+
+		// Each thread extracts its own head flags from the array in shared memory.
+		flags = DeviceExtractHeadFlags(shared.flags, VT * tid, VT);
+
+		DeviceSegBlocksort<NT, VT, Stable, HasValues>(
+			keys_global, values_global,	count2, shared.keys, shared.values,
+			shared.ranges, flags, tid, block, keysDest_global, valsDest_global,
+			ranges_global, comp);
 	}
-	shared.flags[tid] = flags;
-	__syncthreads();
-
-	// Each thread extracts its own head flags from the array in shared memory.
-	flags = DeviceExtractHeadFlags(shared.flags, VT * tid, VT);
-
-	DeviceSegBlocksort<NT, VT, Stable, HasValues>(keys_global, values_global,
-		count2, shared.keys, shared.values, shared.ranges, flags, tid, block,
-		keysDest_global, valsDest_global, ranges_global, comp);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -280,6 +290,7 @@ SGPU_DEVICE void DeviceSegSortCreateJob(SegSortSupport support,
 // KernelSegSortPartitionBase
 // KernelSegSortPartitionDerived
 
+// Not tolerant to large block sizes.
 template<int NT, bool Segments, typename KeyType, typename Comp>
 __global__ void KernelSegSortPartitionBase(const KeyType* keys_global,
 	SegSortSupport support, int count, int nv, int numPartitions, Comp comp) {
@@ -353,6 +364,7 @@ __global__ void KernelSegSortPartitionBase(const KeyType* keys_global,
 		partition, p0, p1, shared.partitions);
 }
 
+// Not tolerant to large block sizes.
 template<int NT, bool Segments, typename KeyType, typename Comp>
 __global__ void KernelSegSortPartitionDerived(const KeyType* keys_global,
 	SegSortSupport support, int count, int numSources, int pass, int nv,
@@ -573,8 +585,8 @@ SGPU_HOST void SegSortKeysFromFlags(T* data_global, int count,
 	int2 launch = Tuning::GetLaunchParams(context);
 	const int NV = launch.x * launch.y;
 
-	int numBlocks = SGPU_DIV_UP(count, NV);
-	int numPasses = FindLog2(numBlocks, true);
+	int numTiles = SGPU_DIV_UP(count, NV);
+	int numPasses = FindLog2(numTiles, true);
 
 	SegSortSupport support;
 	SGPU_MEM(byte) mem = AllocSegSortBuffers(count, NV, support, true, context);
@@ -583,16 +595,18 @@ SGPU_HOST void SegSortKeysFromFlags(T* data_global, int count,
 	T* source = data_global;
 	T* dest = destDevice->get();
 
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(numTiles, maxBlocks);
 	KernelSegBlocksortFlags<Tuning, Stable, false>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(source, (const int*)0,
-		count, flags_global, (1 & numPasses) ? dest : source, (int*)0,
-		support.ranges_global, comp);
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(
+		numTiles, source, (const int*)0, count, flags_global,
+		(1 & numPasses) ? dest : source, (int*)0, support.ranges_global, comp);
 	SGPU_SYNC_CHECK("KernelSegBlocksortFlags");
 
 	if(1 & numPasses) std::swap(source, dest);
 
 	SegSortPasses<Tuning, true, false>(support, source, (int*)0, count,
-		numBlocks, numPasses, dest, (int*)0, comp, context, verbose);
+		numTiles, numPasses, dest, (int*)0, comp, context, verbose);
 }
 
 template<typename T>
@@ -617,8 +631,8 @@ SGPU_HOST void SegSortPairsFromFlags(KeyType* keys_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 	const int NV = launch.x * launch.y;
 
-	int numBlocks = SGPU_DIV_UP(count, NV);
-	int numPasses = FindLog2(numBlocks, true);
+	int numTiles = SGPU_DIV_UP(count, NV);
+	int numPasses = FindLog2(numTiles, true);
 
 	SegSortSupport support;
 	SGPU_MEM(byte) mem = AllocSegSortBuffers(count, NV, support, true, context);
@@ -631,15 +645,18 @@ SGPU_HOST void SegSortPairsFromFlags(KeyType* keys_global,
 	ValType* valsSource = values_global;
 	ValType* valsDest = valsDestDevice->get();
 
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(numTiles, maxBlocks);
 	KernelSegBlocksortFlags<Tuning, Stable, true>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource,
-		count, flags_global, (1 & numPasses) ? keysDest : keysSource,
-		(1 & numPasses) ? valsDest : valsSource, support.ranges_global,
-		comp);
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(
+		numTiles, keysSource, valsSource, count, flags_global,
+		(1 & numPasses) ? keysDest : keysSource,
+		(1 & numPasses) ? valsDest : valsSource,
+		support.ranges_global, comp);
 	SGPU_SYNC_CHECK("KernelSegBlocksortFlags");
 
-	std::vector<int> rangesHost(numBlocks);
-	copyDtoH(&rangesHost[0], support.ranges_global, numBlocks);
+	std::vector<int> rangesHost(numTiles);
+	copyDtoH(&rangesHost[0], support.ranges_global, numTiles);
 
 	if(1 & numPasses) {
 		std::swap(keysSource, keysDest);
@@ -647,7 +664,7 @@ SGPU_HOST void SegSortPairsFromFlags(KeyType* keys_global,
 	}
 
 	SegSortPasses<Tuning, true, true>(support, keysSource, valsSource, count,
-		numBlocks, numPasses, keysDest, valsDest, comp, context, verbose);
+		numTiles, numPasses, keysDest, valsDest, comp, context, verbose);
 }
 template<typename KeyType, typename ValType>
 SGPU_HOST void SegSortPairsFromFlags(KeyType* keys_global,
@@ -675,8 +692,8 @@ SGPU_HOST void SegSortKeysFromIndices(T* data_global, int count,
 	int2 launch = Tuning::GetLaunchParams(context);
 	const int NV = launch.x * launch.y;
 
-	int numBlocks = SGPU_DIV_UP(count, NV);
-	int numPasses = FindLog2(numBlocks, true);
+	int numTiles = SGPU_DIV_UP(count, NV);
+	int numPasses = FindLog2(numTiles, true);
 
 	SegSortSupport support;
 	SGPU_MEM(byte) mem = AllocSegSortBuffers(count, NV, support, true, context);
@@ -688,16 +705,19 @@ SGPU_HOST void SegSortKeysFromIndices(T* data_global, int count,
 	SGPU_MEM(int) partitionsDevice = BinarySearchPartitions<SgpuBoundsLower>(
 		count, indices_global, indicesCount, NV, sgpu::less<int>(), context);
 
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(numTiles, maxBlocks);
 	KernelSegBlocksortIndices<Tuning, Stable, false>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(source, (const int*)0,
-		count, indices_global, partitionsDevice->get(),
-		(1 & numPasses) ? dest : source, (int*)0, support.ranges_global, comp);
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(
+		numTiles, source, (const int*)0, count, indices_global,
+		partitionsDevice->get(), (1 & numPasses) ? dest : source, (int*)0,
+		support.ranges_global, comp);
 	SGPU_SYNC_CHECK("KernelSegBlocksortIndices");
 
 	if(1 & numPasses) std::swap(source, dest);
 
 	SegSortPasses<Tuning, true, false>(support, source, (int*)0, count,
-		numBlocks, numPasses, dest, (int*)0, comp, context, verbose);
+		numTiles, numPasses, dest, (int*)0, comp, context, verbose);
 }
 
 template<typename T>
@@ -723,8 +743,8 @@ SGPU_HOST void SegSortPairsFromIndices(KeyType* keys_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 	const int NV = launch.x * launch.y;
 
-	int numBlocks = SGPU_DIV_UP(count, NV);
-	int numPasses = FindLog2(numBlocks, true);
+	int numTiles = SGPU_DIV_UP(count, NV);
+	int numPasses = FindLog2(numTiles, true);
 
 	SegSortSupport support;
 	SGPU_MEM(byte) mem = AllocSegSortBuffers(count, NV, support, true, context);
@@ -740,9 +760,12 @@ SGPU_HOST void SegSortPairsFromIndices(KeyType* keys_global,
 	SGPU_MEM(int) partitionsDevice = BinarySearchPartitions<SgpuBoundsLower>(
 		count, indices_global, indicesCount, NV, sgpu::less<int>(), context);
 
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(numTiles, maxBlocks);
 	KernelSegBlocksortIndices<Tuning, Stable, true>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(keysSource, valsSource,
-		count, indices_global, partitionsDevice->get(),
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(
+		numTiles, keysSource, valsSource, count, indices_global,
+		partitionsDevice->get(),
 		(1 & numPasses) ? keysDest : keysSource,
 		(1 & numPasses) ? valsDest : valsSource, support.ranges_global, comp);
 	SGPU_SYNC_CHECK("KernelSegBlocksortIndices");
@@ -753,7 +776,7 @@ SGPU_HOST void SegSortPairsFromIndices(KeyType* keys_global,
 	}
 
 	SegSortPasses<Tuning, true, true>(support, keysSource, valsSource, count,
-		numBlocks, numPasses, keysDest, valsDest, comp, context, verbose);
+		numTiles, numPasses, keysDest, valsDest, comp, context, verbose);
 }
 template<typename KeyType, typename ValType>
 SGPU_HOST void SegSortPairsFromIndices(KeyType* keys_global,

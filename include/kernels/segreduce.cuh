@@ -48,6 +48,7 @@ namespace sgpu {
 // A final spine-reducer scans the tile carry-outs and adds into individual
 // results.
 
+// Not tolerant to large block sizes, but do not expect them.
 template<int NT, typename T, typename DestIt, typename Op>
 __global__ void KernelSegReduceSpine1(const int* limits_global, int count,
 	DestIt dest_global, const T* carryIn_global, T identity, Op op,

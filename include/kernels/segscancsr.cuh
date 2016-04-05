@@ -80,7 +80,7 @@ struct SegScanIndirectTuning {
 
 template<typename Tuning, bool Indirect, typename CsrIt, typename SourcesIt,
 	typename InputIt, typename T, typename Op>
-SGPU_LAUNCH_BOUNDS void KernelSegScanCsrUpsweep(CsrIt csr_global,
+SGPU_LAUNCH_BOUNDS void KernelSegScanCsrUpsweep(int numTiles, CsrIt csr_global,
 	SourcesIt sources_global, int count, const int* limits_global,
 	InputIt data_global, T identity, Op op, T* carryOut_global) {
 
@@ -106,48 +106,26 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanCsrUpsweep(CsrIt csr_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int limit0 = limits_global[block];
-	int limit1 = limits_global[block + 1];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	SegReduceRange range;
-	SegReduceTerms terms;
-	int segs[VT + 1], segStarts[VT];
-	T data[VT];
-	if(Indirect) {
-		// Indirect load. We need to load the CSR terms before loading any data.
-		range = DeviceShiftRange(limit0, limit1);
-		int numSegments = range.end - range.begin;
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-		// Load the CSR interval.
-		DeviceGlobalToSharedLoop<NT, VT>(numSegments,
-			csr_global + range.begin, tid, shared.csr);
+		int limit0 = limits_global[block];
+		int limit1 = limits_global[block + 1];
 
-		// Compute the segmented scan terms.
-		terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
-			tid, gid, range.flushLast, segs, segStarts);
+		SegReduceRange range;
+		SegReduceTerms terms;
+		int segs[VT + 1], segStarts[VT];
+		T data[VT];
+		if(Indirect) {
+			// Indirect load. We need to load the CSR terms before loading any
+			// data.
+			range = DeviceShiftRange(limit0, limit1);
+			int numSegments = range.end - range.begin;
 
-		// Load tile of data in thread order from segment IDs.
-		SegReduceLoad::LoadIndirect(count2, tid, gid, numSegments,
-			range.begin, segs, segStarts, data_global, sources_global,
-			identity, data, shared.loadStorage);
-
-		// SegReduceLoad::LoadIndirectFast loads in register order, not thread
-		// order, so is not appropriate for a scan.
-
-	} else {
-		// Direct load. It is more efficient to load the full tile before
-		// dealing with data dependencies.
-		SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity,
-			data, shared.loadStorage);
-
-		range = DeviceShiftRange(limit0, limit1);
-		int numSegments = range.end - range.begin;
-
-		if(range.total) {
 			// Load the CSR interval.
 			DeviceGlobalToSharedLoop<NT, VT>(numSegments,
 				csr_global + range.begin, tid, shared.csr);
@@ -155,37 +133,65 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanCsrUpsweep(CsrIt csr_global,
 			// Compute the segmented scan terms.
 			terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
 				tid, gid, range.flushLast, segs, segStarts);
+
+			// Load tile of data in thread order from segment IDs.
+			SegReduceLoad::LoadIndirect(count2, tid, gid, numSegments,
+				range.begin, segs, segStarts, data_global, sources_global,
+				identity, data, shared.loadStorage);
+
+			// SegReduceLoad::LoadIndirectFast loads in register order, not
+			// thread order, so is not appropriate for a scan.
+
+		} else {
+			// Direct load. It is more efficient to load the full tile before
+			// dealing with data dependencies.
+			SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity,
+				data, shared.loadStorage);
+
+			range = DeviceShiftRange(limit0, limit1);
+			int numSegments = range.end - range.begin;
+
+			if(range.total) {
+				// Load the CSR interval.
+				DeviceGlobalToSharedLoop<NT, VT>(numSegments,
+					csr_global + range.begin, tid, shared.csr);
+
+				// Compute the segmented scan terms.
+				terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
+					tid, gid, range.flushLast, segs, segStarts);
+			}
 		}
-	}
 
-	if(range.total) {
-		// Reduce tile data and store tile's carry-out term to carryOut_global.
+		if(range.total) {
+			// Reduce tile data and store tile's carry-out term to
+			// carryOut_global.
 
-		// Compute thread's carry out.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			x = i ? op(x, data[i]) : data[i];
-			if(segs[i] != segs[i + 1]) x = identity;
+			// Compute thread's carry out.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				x = i ? op(x, data[i]) : data[i];
+				if(segs[i] != segs[i + 1]) x = identity;
+			}
+
+			// Run a parallel segmented scan over each thread's carry-out values
+			// to compute the CTA's carry-out.
+			T carryOut;
+			SegScan::SegScanDelta(tid, terms.tidDelta, x, shared.segScanStorage,
+				&carryOut, identity, op);
+
+			// Store the carry-out for the entire CTA to global memory.
+			if(!tid)
+				carryOut_global[block] = carryOut;
+		} else {
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i)
+				x = i ? op(x, data[i]) : data[i];
+			x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
+			if(!tid)
+				carryOut_global[block] = x;
 		}
-
-		// Run a parallel segmented scan over each thread's carry-out values to
-		// compute the CTA's carry-out.
-		T carryOut;
-		SegScan::SegScanDelta(tid, terms.tidDelta, x, shared.segScanStorage,
-			&carryOut, identity, op);
-
-		// Store the carry-out for the entire CTA to global memory.
-		if(!tid)
-			carryOut_global[block] = carryOut;
-	} else {
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i)
-			x = i ? op(x, data[i]) : data[i];
-		x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
-		if(!tid)
-			carryOut_global[block] = x;
 	}
 }
 
@@ -197,10 +203,10 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanCsrUpsweep(CsrIt csr_global,
 template<typename Tuning, bool Indirect, SgpuScanType Type, typename CsrIt,
 	typename SourcesIt,	typename InputIt, typename DestIt, typename T,
 	typename Op>
-SGPU_LAUNCH_BOUNDS void KernelSegScanCsrDownsweep(CsrIt csr_global,
-	SourcesIt sources_global, int count, const int* limits_global,
-	InputIt data_global, const T* carryIn_global, T identity, Op op,
-	DestIt dest_global) {
+SGPU_LAUNCH_BOUNDS void KernelSegScanCsrDownsweep(int numTiles,
+	CsrIt csr_global, SourcesIt sources_global, int count,
+	const int* limits_global, InputIt data_global, const T* carryIn_global,
+	T identity, Op op, DestIt dest_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
 	typedef typename Op::first_argument_type OpT;
@@ -226,48 +232,26 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanCsrDownsweep(CsrIt csr_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int limit0 = limits_global[block];
-	int limit1 = limits_global[block + 1];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	SegReduceRange range;
-	SegReduceTerms terms;
-	int segs[VT + 1], segStarts[VT];
-	T data[VT];
-	if(Indirect) {
-		// Indirect load. We need to load the CSR terms before loading any data.
-		range = DeviceShiftRange(limit0, limit1);
-		int numSegments = range.end - range.begin;
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-		// Load the CSR interval.
-		DeviceGlobalToSharedLoop<NT, VT>(numSegments,
-			csr_global + range.begin, tid, shared.csr);
+		int limit0 = limits_global[block];
+		int limit1 = limits_global[block + 1];
 
-		// Compute the segmented scan terms.
-		terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
-			tid, gid, range.flushLast, segs, segStarts);
+		SegReduceRange range;
+		SegReduceTerms terms;
+		int segs[VT + 1], segStarts[VT];
+		T data[VT];
+		if(Indirect) {
+			// Indirect load. We need to load the CSR terms before loading any
+			// data.
+			range = DeviceShiftRange(limit0, limit1);
+			int numSegments = range.end - range.begin;
 
-		// Load tile of data in thread order from segment IDs.
-		SegReduceLoad::LoadIndirect(count2, tid, gid, numSegments,
-			range.begin, segs, segStarts, data_global, sources_global,
-			identity, data, shared.loadStorage);
-
-		// SegReduceLoad::LoadIndirectFast loads in register order, not thread
-		// order, so is not appropriate for a scan.
-
-	} else {
-		// Direct load. It is more efficient to load the full tile before
-		// dealing with data dependencies.
-		SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity,
-			data, shared.loadStorage);
-
-		range = DeviceShiftRange(limit0, limit1);
-		int numSegments = range.end - range.begin;
-
-		if(range.total) {
 			// Load the CSR interval.
 			DeviceGlobalToSharedLoop<NT, VT>(numSegments,
 				csr_global + range.begin, tid, shared.csr);
@@ -275,87 +259,114 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanCsrDownsweep(CsrIt csr_global,
 			// Compute the segmented scan terms.
 			terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
 				tid, gid, range.flushLast, segs, segStarts);
+
+			// Load tile of data in thread order from segment IDs.
+			SegReduceLoad::LoadIndirect(count2, tid, gid, numSegments,
+				range.begin, segs, segStarts, data_global, sources_global,
+				identity, data, shared.loadStorage);
+
+			// SegReduceLoad::LoadIndirectFast loads in register order, not
+			// thread order, so is not appropriate for a scan.
+
+		} else {
+			// Direct load. It is more efficient to load the full tile before
+			// dealing with data dependencies.
+			SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity,
+				data, shared.loadStorage);
+
+			range = DeviceShiftRange(limit0, limit1);
+			int numSegments = range.end - range.begin;
+
+			if(range.total) {
+				// Load the CSR interval.
+				DeviceGlobalToSharedLoop<NT, VT>(numSegments,
+					csr_global + range.begin, tid, shared.csr);
+
+				// Compute the segmented scan terms.
+				terms = DeviceSegReducePrepare<NT, VT>(shared.csr, numSegments,
+					tid, gid, range.flushLast, segs, segStarts);
+			}
 		}
-	}
 
-	T carryIn = carryIn_global[block];
-	T localScan[VT];
+		T carryIn = carryIn_global[block];
+		T localScan[VT];
 
-	// Scan tile data, incorporating carry in, and store to localScan.
-	if(range.total) {
-		// Run a segmented scan over the tile's data.
+		// Scan tile data, incorporating carry in, and store to localScan.
+		if(range.total) {
+			// Run a segmented scan over the tile's data.
 
-		// Compute thread's carry out.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			x = i ? op(x, data[i]) : data[i];
-			if(segs[i] != segs[i + 1]) x = identity;
-		}
+			// Compute thread's carry out.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				x = i ? op(x, data[i]) : data[i];
+				if(segs[i] != segs[i + 1]) x = identity;
+			}
 
-		// Run a parallel exclusive segmented scan over each thread's scan.
-		T carryOut;
-		x = SegScan::SegScanDelta(tid, terms.tidDelta, x, shared.segScanStorage,
-			&carryOut, identity, op);
+			// Run a parallel exclusive segmented scan over each thread's scan.
+			T carryOut;
+			x = SegScan::SegScanDelta(tid, terms.tidDelta, x,
+				shared.segScanStorage, &carryOut, identity, op);
 
-		// Add carry-in to the exclusive segmented scan of the tile data if it
-		// applies to this thread's first segment.
-		// Note that values in segs[] are CTA-local. Hence segs[i] = 0 means
-		// thread-local value 'i' is part of the first segment in this tile.
-		if(segs[0] == 0)
+			// Add carry-in to the exclusive segmented scan of the tile data if
+			// it applies to this thread's first segment.
+			// Note that values in segs[] are CTA-local. Hence segs[i] = 0 means
+			// thread-local value 'i' is part of the first segment in this tile.
+			if(segs[0] == 0)
+				x = op(carryIn, x);
+
+			// Perform the desired segmented scan type over this thread's data.
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				if(SgpuScanTypeExc == Type)
+					localScan[i] = x;
+				x = op(x, data[i]);
+				if(SgpuScanTypeInc == Type)
+					localScan[i] = x;
+
+				if(segs[i] != segs[i + 1])
+					x = identity;
+			}
+		} else {
+			// Run a (non-segmented) scan over the tile's data.
+
+			// Exclusive scan over thread's data.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				x = i ? op(x, data[i]) : data[i];
+			}
+
+			// Run a parallel exclusive scan over each thread's scan.
+			T total;
+			x = Scan::Scan(tid, x, shared.scanStorage, &total, SgpuScanTypeExc,
+				identity, op);
+
+			// All items in this tile are from the same segment, hence all
+			// require the carry in.
 			x = op(carryIn, x);
 
-		// Perform the desired segmented scan type over this thread's data.
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			if(SgpuScanTypeExc == Type)
-				localScan[i] = x;
-			x = op(x, data[i]);
-			if(SgpuScanTypeInc == Type)
-				localScan[i] = x;
-
-			if(segs[i] != segs[i + 1])
-				x = identity;
-		}
-	} else {
-		// Run a (non-segmented) scan over the tile's data.
-
-		// Exclusive scan over thread's data.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			x = i ? op(x, data[i]) : data[i];
+			// Perform the desired scan type over this thread's data.
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				if(SgpuScanTypeExc == Type)
+					localScan[i] = x;
+				x = op(x, data[i]);
+				if(SgpuScanTypeInc == Type)
+					localScan[i] = x;
+			}
 		}
 
-		// Run a parallel exclusive scan over each thread's scan.
-		T total;
-		x = Scan::Scan(tid, x, shared.scanStorage, &total, SgpuScanTypeExc,
-			identity, op);
+		if(Indirect) {
+			int numSegments = range.end - range.begin;
 
-		// All items in this tile are from the same segment, hence all require
-		// the carry in.
-		x = op(carryIn, x);
-
-		// Perform the desired scan type over this thread's data.
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			if(SgpuScanTypeExc == Type)
-				localScan[i] = x;
-			x = op(x, data[i]);
-			if(SgpuScanTypeInc == Type)
-				localScan[i] = x;
+			SegScanStore::StoreIndirect(count2, tid, gid, numSegments,
+				range.begin, segs, segStarts, localScan, sources_global,
+				dest_global, shared.storeStorage);
+		} else {
+			SegScanStore::StoreDirect(count2, tid, gid, localScan, dest_global,
+				shared.storeStorage);
 		}
-	}
-
-	if(Indirect) {
-		int numSegments = range.end - range.begin;
-
-		SegScanStore::StoreIndirect(count2, tid, gid, numSegments, range.begin,
-			segs, segStarts, localScan, sources_global, dest_global,
-			shared.storeStorage);
-	} else {
-		SegScanStore::StoreDirect(count2, tid, gid, localScan, dest_global,
-			shared.storeStorage);
 	}
 }
 
@@ -374,27 +385,29 @@ SGPU_HOST void SegScanInner(InputIt data_global, CsrIt csr_global,
 	int2 launch = Tuning::GetLaunchParams(context);
 	int NV = launch.x * launch.y;
 
-	int numBlocks = SGPU_DIV_UP(count, NV);
+	int numTiles = SGPU_DIV_UP(count, NV);
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(numTiles, maxBlocks);
 
 	// Use upper-bound binary search to partition the CSR structure into tiles.
 	SGPU_MEM(int) limitsDevice = PartitionCsrPlus(count, NV, csr_global,
-		numSegments, numSegments2_global, numBlocks + 1, context);
+		numSegments, numSegments2_global, numTiles + 1, context);
 
 	// Segmented scan without source intervals.
-	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numBlocks);
+	SGPU_MEM(T) carryOutDevice = context.Malloc<T>(numTiles);
 	KernelSegScanCsrUpsweep<Tuning, Indirect>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(csr_global,
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(numTiles, csr_global,
 		sources_global, count, limitsDevice->get(), data_global, identity, op,
 		carryOutDevice->get());
 	SGPU_SYNC_CHECK("KernelSegScanCsr");
 
 	// Fix-up carry-in values which span tiles in KernelSegScanCsr.
-	SegScanSpine(limitsDevice->get(), numBlocks, carryOutDevice->get(),
+	SegScanSpine(limitsDevice->get(), numTiles, carryOutDevice->get(),
 		identity, op, context);
 
 	// Segmented scan, with carry-ins from the spines.
 	KernelSegScanCsrDownsweep<Tuning, Indirect, Type>
-		<<<numBlocks, launch.x, 0, context.Stream()>>>(csr_global,
+		<<<numBlocks, launch.x, 0, context.Stream()>>>(numTiles, csr_global,
 		sources_global, count, limitsDevice->get(), data_global,
 		carryOutDevice->get(), identity, op, dest_global);
 	SGPU_SYNC_CHECK("KernelSegScanCsrDownsweep");
@@ -493,9 +506,9 @@ SGPU_HOST void SegScanCsrPreprocess(int count, CsrIt csr_global,
 
 // Like KernelSegScanCsr but for pre-processed CSR data.
 template<typename Tuning, typename InputIt, typename T,	typename Op>
-SGPU_LAUNCH_BOUNDS void KernelSegScanApplyUpsweep(const int* threadCodes_global,
-	int count, const int* limits_global, InputIt data_global, T identity,
-	Op op, T* carryOut_global) {
+SGPU_LAUNCH_BOUNDS void KernelSegScanApplyUpsweep(int numTiles,
+	const int* threadCodes_global, int count, const int* limits_global,
+	InputIt data_global, T identity, Op op, T* carryOut_global) {
 
 	typedef SGPU_LAUNCH_PARAMS Params;
 	typedef typename Op::first_argument_type OpT;
@@ -518,63 +531,68 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanApplyUpsweep(const int* threadCodes_global,
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int limit0 = limits_global[block];
-	int limit1 = limits_global[block + 1];
-	int threadCodes = threadCodes_global[NT * block + tid];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	// Load the data and transpose into thread order.
-	T data[VT];
-	SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity, data,
-		shared.loadStorage);
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-	// Compute the range.
-	SegReduceRange range = DeviceShiftRange(limit0, limit1);
+		int limit0 = limits_global[block];
+		int limit1 = limits_global[block + 1];
+		int threadCodes = threadCodes_global[NT * block + tid];
 
-	if(range.total) {
-		// Expand the segment indices.
-		int segs[VT + 1];
-		DeviceExpandFlagsToRows<VT>(threadCodes>> 20, threadCodes, segs);
-		int tidDelta = 0x7f & (threadCodes>> 13);
+		// Load the data and transpose into thread order.
+		T data[VT];
+		SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity, data,
+			shared.loadStorage);
 
-		// Reduce tile data and store tile's carry-out term to carryOut_global.
+		// Compute the range.
+		SegReduceRange range = DeviceShiftRange(limit0, limit1);
 
-		// Compute thread's carry out.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			x = i ? op(x, data[i]) : data[i];
-			if(segs[i] != segs[i + 1]) x = identity;
+		if(range.total) {
+			// Expand the segment indices.
+			int segs[VT + 1];
+			DeviceExpandFlagsToRows<VT>(threadCodes>> 20, threadCodes, segs);
+			int tidDelta = 0x7f & (threadCodes>> 13);
+
+			// Reduce tile data and store tile's carry-out term to
+			// carryOut_global.
+
+			// Compute thread's carry out.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				x = i ? op(x, data[i]) : data[i];
+				if(segs[i] != segs[i + 1]) x = identity;
+			}
+
+			// Run a parallel segmented scan over each thread's carry-out values
+			// to compute the CTA's carry-out.
+			T carryOut;
+			SegScan::SegScanDelta(tid, tidDelta, x, shared.segScanStorage,
+				&carryOut, identity, op);
+
+			// Store the carry-out for the entire CTA to global memory.
+			if(!tid)
+				carryOut_global[block] = carryOut;
+		} else {
+			// If there are no end flags in this CTA, use a fast reduction.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i)
+				x = i ? op(x, data[i]) : data[i];
+			x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
+			if(!tid)
+				carryOut_global[block] = x;
 		}
-
-		// Run a parallel segmented scan over each thread's carry-out values to
-		// compute the CTA's carry-out.
-		T carryOut;
-		SegScan::SegScanDelta(tid, tidDelta, x, shared.segScanStorage,
-			&carryOut, identity, op);
-
-		// Store the carry-out for the entire CTA to global memory.
-		if(!tid)
-			carryOut_global[block] = carryOut;
-	} else {
-		// If there are no end flags in this CTA, use a fast reduction.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i)
-			x = i ? op(x, data[i]) : data[i];
-		x = FastReduce::Reduce(tid, x, shared.reduceStorage, op);
-		if(!tid)
-			carryOut_global[block] = x;
 	}
 }
 
 // Like KernelSegScanCsrDownsweep but for pre-processed CSR data.
 template<typename Tuning, SgpuScanType Type, typename InputIt, typename DestIt,
 	typename T,	typename Op>
-SGPU_LAUNCH_BOUNDS void KernelSegScanApplyDownsweep(
+SGPU_LAUNCH_BOUNDS void KernelSegScanApplyDownsweep(int numTiles,
 	const int* threadCodes_global, int count, const int* limits_global,
 	InputIt data_global, const T* carryIn_global, T identity, Op op,
 	DestIt dest_global) {
@@ -602,98 +620,102 @@ SGPU_LAUNCH_BOUNDS void KernelSegScanApplyDownsweep(
 	__shared__ Shared shared;
 
 	int tid = threadIdx.x;
-	int block = blockIdx.x;
-	int gid = NV * block;
-	int count2 = min(NV, count - gid);
 
-	int limit0 = limits_global[block];
-	int limit1 = limits_global[block + 1];
-	int threadCodes = threadCodes_global[NT * block + tid];
+	for(int block = blockIdx.x; block < numTiles; block += gridDim.x) {
+		__syncthreads();
 
-	// Load the data and transpose into thread order.
-	T data[VT];
-	SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity, data,
-		shared.loadStorage);
+		int gid = NV * block;
+		int count2 = min(NV, count - gid);
 
-	// Compute the range.
-	SegReduceRange range = DeviceShiftRange(limit0, limit1);
+		int limit0 = limits_global[block];
+		int limit1 = limits_global[block + 1];
+		int threadCodes = threadCodes_global[NT * block + tid];
 
-	T carryIn = carryIn_global[block];
-	T localScan[VT];
+		// Load the data and transpose into thread order.
+		T data[VT];
+		SegReduceLoad::LoadDirect(count2, tid, gid, data_global, identity, data,
+			shared.loadStorage);
 
-	// Scan tile data, incorporating carry in, and store to localScan.
-	if(range.total) {
-		// Run a segmented scan over the tile's data.
+		// Compute the range.
+		SegReduceRange range = DeviceShiftRange(limit0, limit1);
 
-		// Expand the segment indices.
-		int segs[VT + 1];
-		DeviceExpandFlagsToRows<VT>(threadCodes>> 20, threadCodes, segs);
-		int tidDelta = 0x7f & (threadCodes>> 13);
+		T carryIn = carryIn_global[block];
+		T localScan[VT];
 
-		// Compute thread's carry out.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			x = i ? op(x, data[i]) : data[i];
-			if(segs[i] != segs[i + 1]) x = identity;
-		}
+		// Scan tile data, incorporating carry in, and store to localScan.
+		if(range.total) {
+			// Run a segmented scan over the tile's data.
 
-		// Run a parallel exclusive segmented scan over each thread's scan.
-		T carryOut;
-		x = SegScan::SegScanDelta(tid, tidDelta, x, shared.segScanStorage,
-			&carryOut, identity, op);
+			// Expand the segment indices.
+			int segs[VT + 1];
+			DeviceExpandFlagsToRows<VT>(threadCodes>> 20, threadCodes, segs);
+			int tidDelta = 0x7f & (threadCodes>> 13);
 
-		// Add carry-in to the exclusive segmented scan of the tile data if it
-		// applies to this thread's first segment.
-		// Note that values in segs[] are CTA-local. Hence segs[i] = 0 means
-		// thread-local value 'i' is part of the first segment in this tile.
-		if(segs[0] == 0)
+			// Compute thread's carry out.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				x = i ? op(x, data[i]) : data[i];
+				if(segs[i] != segs[i + 1]) x = identity;
+			}
+
+			// Run a parallel exclusive segmented scan over each thread's scan.
+			T carryOut;
+			x = SegScan::SegScanDelta(tid, tidDelta, x, shared.segScanStorage,
+				&carryOut, identity, op);
+
+			// Add carry-in to the exclusive segmented scan of the tile data if it
+			// applies to this thread's first segment.
+			// Note that values in segs[] are CTA-local. Hence segs[i] = 0 means
+			// thread-local value 'i' is part of the first segment in this tile.
+			if(segs[0] == 0)
+				x = op(carryIn, x);
+
+			// Perform the desired segmented scan type over this thread's data.
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				if(SgpuScanTypeExc == Type)
+					localScan[i] = x;
+				x = op(x, data[i]);
+				if(SgpuScanTypeInc == Type)
+					localScan[i] = x;
+
+				if(segs[i] != segs[i + 1])
+					x = identity;
+			}
+		} else {
+			// Run a (non-segmented) scan over the tile's data.
+
+			// Compute thread's carry out.
+			T x;
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				x = i ? op(x, data[i]) : data[i];
+			}
+
+			// Run a parallel exclusive scan over each thread's scan.
+			T total;
+			x = Scan::Scan(tid, x, shared.scanStorage, &total, SgpuScanTypeExc,
+				identity, op);
+
+			// All items in this tile are from the same segment, hence all require
+			// the carry in.
 			x = op(carryIn, x);
 
-		// Perform the desired segmented scan type over this thread's data.
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			if(SgpuScanTypeExc == Type)
-				localScan[i] = x;
-			x = op(x, data[i]);
-			if(SgpuScanTypeInc == Type)
-				localScan[i] = x;
-
-			if(segs[i] != segs[i + 1])
-				x = identity;
-		}
-	} else {
-		// Run a (non-segmented) scan over the tile's data.
-
-		// Compute thread's carry out.
-		T x;
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			x = i ? op(x, data[i]) : data[i];
+			// Perform the desired scan type over this thread's data.
+			#pragma unroll
+			for(int i = 0; i < VT; ++i) {
+				if(SgpuScanTypeExc == Type)
+					localScan[i] = x;
+				x = op(x, data[i]);
+				if(SgpuScanTypeInc == Type)
+					localScan[i] = x;
+			}
 		}
 
-		// Run a parallel exclusive scan over each thread's scan.
-		T total;
-		x = Scan::Scan(tid, x, shared.scanStorage, &total, SgpuScanTypeExc,
-			identity, op);
-
-		// All items in this tile are from the same segment, hence all require
-		// the carry in.
-		x = op(carryIn, x);
-
-		// Perform the desired scan type over this thread's data.
-		#pragma unroll
-		for(int i = 0; i < VT; ++i) {
-			if(SgpuScanTypeExc == Type)
-				localScan[i] = x;
-			x = op(x, data[i]);
-			if(SgpuScanTypeInc == Type)
-				localScan[i] = x;
-		}
+		SegScanStore::StoreDirect(count2, tid, gid, localScan, dest_global,
+			shared.storeStorage);
 	}
-
-	SegScanStore::StoreDirect(count2, tid, gid, localScan, dest_global,
-		shared.storeStorage);
 }
 
 template<SgpuScanType Type, typename InputIt, typename DestIt, typename T,
@@ -705,42 +727,45 @@ SGPU_HOST void SegScanApply(const SegCsrPreprocessData& preprocess,
 	typedef typename SegScanPreprocessTuning<sizeof(T)>::Tuning Tuning;
 	int2 launch = Tuning::GetLaunchParams(context);
 
+	int maxBlocks = context.MaxGridSize();
+	int numBlocks = min(preprocess.numTiles, maxBlocks);
+
 	if(preprocess.csr2Device.get()) {
 		// Support empties.
-		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numBlocks);
+		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numTiles);
 		KernelSegScanApplyUpsweep<Tuning>
-			<<<preprocess.numBlocks, launch.x, 0, context.Stream()>>>(
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(preprocess.numTiles,
 			preprocess.threadCodesDevice->get(), preprocess.count,
 			preprocess.limitsDevice->get(), data_global, identity, op,
 			carryOutDevice->get());
 		SGPU_SYNC_CHECK("KernelSegScanApply");
 
 		// Fix-up carry-in values which span tiles in KernelSegScanApply.
-		SegScanSpine(preprocess.limitsDevice->get(), preprocess.numBlocks,
+		SegScanSpine(preprocess.limitsDevice->get(), preprocess.numTiles,
 			carryOutDevice->get(), identity, op, context);
 
 		KernelSegScanApplyDownsweep<Tuning, Type>
-			<<<preprocess.numBlocks, launch.x, 0, context.Stream()>>>(
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(preprocess.numTiles,
 			preprocess.threadCodesDevice->get(), preprocess.count,
 			preprocess.limitsDevice->get(), data_global, carryOutDevice->get(),
 			identity, op, dest_global);
 		SGPU_SYNC_CHECK("KernelSegScanDownsweepApply");
 	} else {
 		// No empties.
-		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numBlocks);
+		SGPU_MEM(T) carryOutDevice = context.Malloc<T>(preprocess.numTiles);
 		KernelSegScanApplyUpsweep<Tuning>
-			<<<preprocess.numBlocks, launch.x, 0, context.Stream()>>>(
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(preprocess.numTiles,
 			preprocess.threadCodesDevice->get(), preprocess.count,
 			preprocess.limitsDevice->get(), data_global, identity, op,
 			carryOutDevice->get());
 		SGPU_SYNC_CHECK("KernelSegReduceApply");
 
 		// Fix-up carry-in values which span tiles in KernelSegScanApply.
-		SegScanSpine(preprocess.limitsDevice->get(), preprocess.numBlocks,
+		SegScanSpine(preprocess.limitsDevice->get(), preprocess.numTiles,
 			carryOutDevice->get(), identity, op, context);
 
 		KernelSegScanApplyDownsweep<Tuning, Type>
-			<<<preprocess.numBlocks, launch.x, 0, context.Stream()>>>(
+			<<<numBlocks, launch.x, 0, context.Stream()>>>(preprocess.numTiles,
 			preprocess.threadCodesDevice->get(), preprocess.count,
 			preprocess.limitsDevice->get(), data_global, carryOutDevice->get(),
 			identity, op, dest_global);
