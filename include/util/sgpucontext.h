@@ -285,8 +285,8 @@ public:
 	int PTXVersion() { return Device().PTXVersion(); }
 
 	template<typename T>
-	int MaxActiveBlocks(T kernel, size_t dynamicSMemSize = 0) {
-		return Device().MaxActiveBlocks(kernel, dynamicSMemSize);
+	int MaxActiveBlocks(T kernel, int blockSize, size_t dynamicSMemSize = 0) {
+		return Device().MaxActiveBlocks(kernel, blockSize, dynamicSMemSize);
 	}
 
 	std::string DeviceString() { return Device().DeviceString(); }
