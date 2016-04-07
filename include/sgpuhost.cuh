@@ -39,7 +39,7 @@
 #pragma once
 
 #include "sgpudevice.cuh"
-#include "util/sgpucontext.h"
+#include "util/sgpucontext.cuh"
 
 namespace sgpu {
 

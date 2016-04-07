@@ -1,5 +1,6 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -27,18 +28,38 @@
 
 /******************************************************************************
  *
- * Code and text by Sean Baxter, NVIDIA Research
- * See http://nvlabs.github.io/moderngpu for repository and documentation.
+ * Original code and text by Sean Baxter, NVIDIA Research
+ * Modified code and text by Sam Thomson.
+ * Segmented GPU is a derivative of Modern GPU.
+ * See http://nvlabs.github.io/moderngpu for original repository and
+ * documentation.
  *
  ******************************************************************************/
 
+#include "singleton.h"
 #include "util/format.h"
 #include <cstring>
 
 namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
-// CudaTimer method implementations.
+// CudaEvent and CudaTimer method implementations.
+
+inline CudaEvent::CudaEvent() {
+	cudaEventCreate(&_event);
+}
+inline CudaEvent::CudaEvent(int flags) {
+	cudaEventCreateWithFlags(&_event, flags);
+}
+inline CudaEvent::operator cudaEvent_t() {
+	return _event;
+}
+inline CudaEvent::~CudaEvent() {
+	cudaEventDestroy(_event);
+}
+inline void CudaEvent::Swap(CudaEvent& rhs) {
+	std::swap(_event, rhs._event);
+}
 
 inline void CudaTimer::Start() {
 	cudaEventRecord(start);
@@ -224,94 +245,76 @@ SGPU_MEM(T) CudaMemSupport::GenFunc(size_t count, Func f) {
 ////////////////////////////////////////////////////////////////////////////////
 // CudaDevice
 
-struct DeviceCache {
-	int numCudaDevices;
-	CudaDevice** cudaDevices;
-
-	DeviceCache();
-	int GetDeviceCount();
-	CudaDevice* GetByOrdinal(int ordinal);
-	~DeviceCache();
-};
-
-inline DeviceCache::DeviceCache() {
-	numCudaDevices = -1;
-	cudaDevices = 0;
-}
-
-inline int DeviceCache::GetDeviceCount() {
-	if(-1 == numCudaDevices) {
-		cudaError_t error = cudaGetDeviceCount(&numCudaDevices);
-		if(cudaSuccess != error || numCudaDevices <= 0) {
-			fprintf(stderr, "ERROR ENUMERATING CUDA DEVICES.\nExiting.\n");
-			exit(0);
-		}
-		cudaDevices = new CudaDevice*[numCudaDevices];
-		memset(cudaDevices, 0, sizeof(CudaDevice*) * numCudaDevices);
-	}
-	return numCudaDevices;
-}
-
-inline DeviceCache::~DeviceCache() {
-	if(cudaDevices) {
-		for(int i = 0; i < numCudaDevices; ++i)
-			delete cudaDevices[i];
-		delete [] cudaDevices;
-	}
-	cudaDeviceReset();
-}
-
-// The GetByOrdinal() implementation requires a __global__ kernel, and thus can
-// only be complied from .cu files. Host files should never include the
-// implementation. We thus assume that at least one .cu file / translation unit
-// will contain '#include "sgpucontext.h"'. This must indeed be the case, as
-// all segmented gpu functions require an sgpu::CudaContext.
-#ifdef __CUDACC__
-
 // Must be template to avoid multiple definition error.
 // (Cannot inline a __global__).
 template<int dummy>
 __global__ void KernelVersionShim() { }
 
-inline CudaDevice* DeviceCache::GetByOrdinal(int ordinal) {
-	if(ordinal >= GetDeviceCount()) return 0;
+struct DeviceCache {
+	int numCudaDevices;
+	CudaDevice** cudaDevices;
 
-	if(!cudaDevices[ordinal]) {
-		// Retrieve the device properties.
-		CudaDevice* device = cudaDevices[ordinal] = new CudaDevice;
-		device->_ordinal = ordinal;
-		cudaError_t error = cudaGetDeviceProperties(&device->_prop,
-			ordinal);
-		if(cudaSuccess != error) {
-			fprintf(stderr, "FAILURE TO CREATE CUDA DEVICE %d\n", ordinal);
-			exit(0);
-		}
-
-		// Get the compiler version for this device.
-		cudaSetDevice(ordinal);
-		cudaFuncAttributes attr;
-		error = cudaFuncGetAttributes(&attr, KernelVersionShim<0>);
-		if(cudaSuccess == error)
-			device->_ptxVersion = 10 * attr.ptxVersion;
-		else {
-			printf("NOT COMPILED WITH COMPATIBLE PTX VERSION FOR DEVICE"
-				" %d\n", ordinal);
-			// The module wasn't compiled with support for this device.
-			device->_ptxVersion = 0;
-		}
+	DeviceCache() {
+		numCudaDevices = -1;
+		cudaDevices = 0;
 	}
-	return cudaDevices[ordinal];
-}
 
-#endif
+	int GetDeviceCount() {
+		if(-1 == numCudaDevices) {
+			cudaError_t error = cudaGetDeviceCount(&numCudaDevices);
+			if(cudaSuccess != error || numCudaDevices <= 0) {
+				fprintf(stderr, "ERROR ENUMERATING CUDA DEVICES.\nExiting.\n");
+				exit(0);
+			}
+			cudaDevices = new CudaDevice*[numCudaDevices];
+			memset(cudaDevices, 0, sizeof(CudaDevice*) * numCudaDevices);
+		}
+		return numCudaDevices;
+	}
 
-std::auto_ptr<DeviceCache> deviceCache;
+	CudaDevice* GetByOrdinal(int ordinal) {
+		if(ordinal >= GetDeviceCount()) return 0;
 
+		if(!cudaDevices[ordinal]) {
+			// Retrieve the device properties.
+			CudaDevice* device = cudaDevices[ordinal] = new CudaDevice;
+			device->_ordinal = ordinal;
+			cudaError_t error = cudaGetDeviceProperties(&device->_prop,
+				ordinal);
+			if(cudaSuccess != error) {
+				fprintf(stderr, "FAILURE TO CREATE CUDA DEVICE %d\n", ordinal);
+				exit(0);
+			}
+
+			// Get the compiler version for this device.
+			cudaSetDevice(ordinal);
+			cudaFuncAttributes attr;
+			error = cudaFuncGetAttributes(&attr, KernelVersionShim<0>);
+			if(cudaSuccess == error)
+				device->_ptxVersion = 10 * attr.ptxVersion;
+			else {
+				printf("NOT COMPILED WITH COMPATIBLE PTX VERSION FOR DEVICE"
+					" %d\n", ordinal);
+				// The module wasn't compiled with support for this device.
+				device->_ptxVersion = 0;
+			}
+		}
+		return cudaDevices[ordinal];
+	}
+
+	~DeviceCache() {
+		if(cudaDevices) {
+			for(int i = 0; i < numCudaDevices; ++i)
+				delete cudaDevices[i];
+			delete [] cudaDevices;
+		}
+		cudaDeviceReset();
+	}
+};
+typedef Singleton<DeviceCache> deviceCache;
 
 inline int CudaDevice::DeviceCount() {
-	if(!deviceCache.get())
-		deviceCache.reset(new DeviceCache);
-	return deviceCache->GetDeviceCount();
+	return deviceCache::Instance().GetDeviceCount();
 }
 
 inline CudaDevice& CudaDevice::ByOrdinal(int ordinal) {
@@ -319,7 +322,7 @@ inline CudaDevice& CudaDevice::ByOrdinal(int ordinal) {
 		fprintf(stderr, "CODE REQUESTED INVALID CUDA DEVICE %d\n", ordinal);
 		exit(0);
 	}
-	return *deviceCache->GetByOrdinal(ordinal);
+	return *(deviceCache::Instance().GetByOrdinal(ordinal));
 }
 
 inline CudaDevice& CudaDevice::Selected() {
@@ -412,7 +415,7 @@ struct ContextCache {
 		}
 	}
 };
-std::auto_ptr<ContextCache> contextCache;
+typedef Singleton<ContextCache> contextCache;
 
 inline CudaContext::CudaContext(CudaDevice& device, bool newStream) :
 	_event(cudaEventDisableTiming /*| cudaEventBlockingSync */),
@@ -456,7 +459,7 @@ inline CudaContext& CudaContext::CachedContext(int ordinal) {
 		exit(0);
 	}
 
-	CudaContext& context = *contextCache->GetByOrdinal(ordinal);
+	CudaContext& context = *(contextCache::Instance().GetByOrdinal(ordinal));
 	if(!context.PTXVersion()) {
 		fprintf(stderr, "This CUDA executable was not compiled with support"
 			" for device %d (sm_%2d)\n", ordinal, context.ArchVersion() / 10);
@@ -490,26 +493,44 @@ inline ContextPtr CreateCudaDeviceAttachStream(cudaStream_t stream) {
 	return CreateCudaDeviceAttachStream(ordinal, stream);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// CudaAllocSimple
-
-inline cudaError_t CudaAllocSimple::Malloc(size_t size, void** p) {
-	cudaError_t error = cudaSuccess;
-	*p = 0;
-	if(size) error = cudaMalloc(p, size);
-
-	if(cudaSuccess != error) {
-		printf("CUDA MALLOC ERROR %d\n", error);
+inline ContextPtr CreateCudaDeviceFromArgv(int argc, char** argv,
+	bool printInfo) {
+	int ordinal = 0;
+	if(argc >= 2 && !sscanf(argv[1], "%d", &ordinal)) {
+		fprintf(stderr, "INVALID COMMAND LINE ARGUMENT - NOT A CUDA ORDINAL\n");
+		exit(0);
+	}
+	ContextPtr context = CreateCudaDevice(ordinal);
+	if(!context->PTXVersion()) {
+		fprintf(stderr, "This CUDA executable was not compiled with support"
+			" for device %d (sm_%2d)\n", ordinal, context->ArchVersion() / 10);
 		exit(0);
 	}
 
-	return error;
+	context->SetActive();
+	if(printInfo)
+		printf("%s\n", context->Device().DeviceString().c_str());
+	return context;
 }
 
-inline bool CudaAllocSimple::Free(void* p) {
-	cudaError_t error = cudaSuccess;
-	if(p) error = cudaFree(p);
-	return cudaSuccess == error;
+inline ContextPtr CreateCudaDeviceStreamFromArgv(int argc, char** argv,
+	bool printInfo) {
+	int ordinal = 0;
+	if(argc >= 2 && !sscanf(argv[1], "%d", &ordinal)) {
+		fprintf(stderr, "INVALID COMMAND LINE ARGUMENT - NOT A CUDA ORDINAL\n");
+		exit(0);
+	}
+	ContextPtr context = CreateCudaDeviceStream(ordinal);
+	if(!context->PTXVersion()) {
+		fprintf(stderr, "This CUDA executable was not compiled with support"
+			" for device %d (sm_%2d)\n", ordinal, context->ArchVersion() / 10);
+		exit(0);
+	}
+
+	context->SetActive();
+	if(printInfo)
+		printf("%s\n", context->Device().DeviceString().c_str());
+	return context;
 }
 
 } // namespace sgpu

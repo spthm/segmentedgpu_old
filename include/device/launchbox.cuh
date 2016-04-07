@@ -34,7 +34,7 @@
 
 #pragma once
 
-#include "../util/sgpucontext.h"
+#include "../util/sgpucontext.cuh"
 
 namespace sgpu {
 

@@ -1,6 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2013, NVIDIA CORPORATION; 2016, Sam Thomson.
- * All rights reserved.
+ * Copyright (c) 2016, Sam Thomson.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -28,8 +27,7 @@
 
 /******************************************************************************
  *
- * Original code and text by Sean Baxter, NVIDIA Research
- * Modified code and text by Sam Thomson.
+ * Code and text by Sam Thomson.
  * Segmented GPU is a derivative of Modern GPU.
  * See http://nvlabs.github.io/moderngpu for original repository and
  * documentation.
@@ -38,68 +36,25 @@
 
 #pragma once
 
-#include "util/util.h"
-#include <cuda.h>
-#include <cuda_runtime_api.h>
-
 namespace sgpu {
 
-class CudaDevice;
-
-class CudaContext;
-typedef intrusive_ptr<CudaContext> ContextPtr;
-
-////////////////////////////////////////////////////////////////////////////////
-// Customizable allocator.
-
-// CudaAlloc is the interface class all allocator accesses. Users may derive
-// this, implement custom allocators, and set it to the device with
-// CudaDevice::SetAllocator.
-
-class CudaAlloc : public CudaBase {
+// Meyer's singleton.
+template<class T>
+class Singleton {
 public:
-	virtual cudaError_t Malloc(size_t size, void** p) = 0;
-	virtual bool Free(void* p) = 0;
-	virtual void Clear() = 0;
-
-	virtual ~CudaAlloc() { }
-
-	CudaDevice& Device() { return _device; }
-
-protected:
-	CudaAlloc(CudaDevice& device) : _device(device) { }
-	CudaDevice& _device;
-};
-
-// A concrete class allocator that simply calls cudaMalloc and cudaFree.
-class CudaAllocSimple : public CudaAlloc {
-public:
-	CudaAllocSimple(CudaDevice& device) : CudaAlloc(device) { }
-
-	virtual cudaError_t Malloc(size_t size, void** p);
-	virtual bool Free(void* p);
-	virtual void Clear() { }
-	virtual ~CudaAllocSimple() { }
-};
-
-
-inline cudaError_t CudaAllocSimple::Malloc(size_t size, void** p) {
-	cudaError_t error = cudaSuccess;
-	*p = 0;
-	if(size) error = cudaMalloc(p, size);
-
-	if(cudaSuccess != error) {
-		printf("CUDA MALLOC ERROR %d\n", error);
-		exit(0);
+	// Strictly not thread-safe, but safe in GCC:
+	// https://gcc.gnu.org/ml/gcc-patches/2004-09/msg00265.html
+	static T& Instance() {
+		static T _instance;
+		return _instance;
 	}
 
-	return error;
-}
-
-inline bool CudaAllocSimple::Free(void* p) {
-	cudaError_t error = cudaSuccess;
-	if(p) error = cudaFree(p);
-	return cudaSuccess == error;
-}
+private:
+	// It should not be possible to create, destroy or copy a Singleton.
+	Singleton() {};
+	~Singleton();
+	Singleton(const Singleton<T>&);
+	Singleton<T>& operator=(const Singleton<T>&);
+};
 
 } // namespace sgpu
