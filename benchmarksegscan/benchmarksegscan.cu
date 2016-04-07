@@ -37,8 +37,6 @@
  ******************************************************************************/
 
 #include "kernels/segscancsr.cuh"
-#include "util/create.h"
-#include "util/format.h"
 
 using namespace sgpu;
 

@@ -29,8 +29,6 @@
 #include "kernels/scan.cuh"
 #include "kernels/streamscan.cuh"
 #include "kernels/reduce.cuh"
-#include "util/create.h"
-#include "util/format.h"
 
 using namespace sgpu;
 

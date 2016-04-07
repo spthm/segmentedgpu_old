@@ -32,8 +32,6 @@
  *
  ******************************************************************************/
 
-#include "util/sgpucontext.h"
-#include "util/create.h"
 #include "device/launchbox.cuh"
 
 using namespace sgpu;

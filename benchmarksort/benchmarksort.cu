@@ -33,8 +33,6 @@
  ******************************************************************************/
 
 #include "kernels/mergesort.cuh"
-#include "util/create.h"
-#include "util/format.h"
 #include <algorithm>
 
 using namespace sgpu;

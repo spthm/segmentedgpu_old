@@ -8,7 +8,6 @@ build: benchmarksort
 benchmarksort.o: benchmarksort.cu
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
-
 sgpuutil.o: ../src/sgpuutil.cpp
 	nvcc $(NVCCFLAGS) -o $@ -c $<
 
