@@ -34,6 +34,7 @@
 
 #pragma once
 
+#include "sgpucontext.h"
 #include "static.h"
 #include <vector>
 #include <cstdio>
@@ -108,6 +109,24 @@ std::string FormatArrayOp(const T* data, size_t count, Op op, int numCols) {
 	return s;
 }
 
+template<typename T, typename Op>
+std::string FormatArrayOp(const std::vector<T>& data, Op op, int numCols) {
+	return FormatArrayOp(&data[0], (int)data.size(), op, numCols);
+}
+
+template<typename T, typename Op>
+std::string FormatArrayOp(const CudaDeviceMem<T>& mem, int count, Op op,
+	int numCols) {
+	std::vector<T> host;
+	mem.ToHost(host, count);
+	return FormatArrayOp(host, op, numCols);
+}
+
+template<typename T, typename Op>
+std::string FormatArrayOp(const CudaDeviceMem<T>& mem, Op op, int numCols) {
+	return FormatArrayOp(mem, mem.Size(), op, numCols);
+}
+
 template<typename T>
 std::string FormatArray(const T* data, size_t count, const char* format,
 	int numCols) {
@@ -119,10 +138,7 @@ std::string FormatArray(const std::vector<T>& data, const char* format,
 	int numCols) {
 	return FormatArray(&data[0], (int)data.size(), format, numCols);
 }
-template<typename T, typename Op>
-std::string FormatArrayOp(const std::vector<T>& data, Op op, int numCols) {
-	return FormatArrayOp(&data[0], (int)data.size(), op, numCols);
-}
+
 
 template<typename T>
 void PrintArray(const T* data, size_t count, const char* format, int numCols) {
@@ -142,7 +158,23 @@ void PrintArrayOp(const std::vector<T>& data, Op op, int numCols) {
 	printf("%s", s.c_str());
 }
 
+template<typename T>
+void PrintArray(const CudaDeviceMem<T>& mem, int count, const char* format,
+	int numCols) {
+	std::string s = FormatArrayOp(mem, count, FormatOpPrintf(format), numCols);
+	printf("%s", s.c_str());
+}
 
+template<typename T>
+void PrintArray(const CudaDeviceMem<T>& mem, const char* format, int numCols) {
+	PrintArray(mem, mem.Size(), format, numCols);
+}
+
+template<typename T, typename Op>
+void PrintArrayOp(const CudaDeviceMem<T>& mem, Op op, int numCols) {
+	std::string s = FormatArrayOp(mem, op, numCols);
+	printf("%s", s.c_str());
+}
 
 
 } // namespace sgpu

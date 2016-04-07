@@ -33,6 +33,8 @@
  ******************************************************************************/
 
 #include "kernels/segreducecsr.cuh"
+#include "util/create.h"
+#include "util/format.h"
 
 using namespace sgpu;
 
@@ -215,7 +217,7 @@ void BenchmarkSegReduce2(TestType testType, bool supportEmpty,
 }
 
 int main(int argc, char** argv) {
-	ContextPtr context = CreateCudaDevice(argc, argv, true);
+	ContextPtr context = CreateCudaDeviceFromArgv(argc, argv, true);
 
 	bool supportEmpty = false;
 	TestType testType = TestTypeNormal;

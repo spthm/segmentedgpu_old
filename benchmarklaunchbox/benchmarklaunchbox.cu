@@ -33,6 +33,9 @@
  ******************************************************************************/
 
 #include "kernels/mergesort.cuh"
+#include "util/create.h"
+#include "util/format.h"
+
 
 using namespace sgpu;
 
@@ -107,7 +110,7 @@ void BenchmarkTunedMergesort(int count, int numIt, CudaContext& context) {
 }
 
 int main(int argc, char** argv) {
-	ContextPtr context = CreateCudaDevice(argc, argv, true);
+	ContextPtr context = CreateCudaDeviceFromArgv(argc, argv, true);
 
 	const int N = 10000000;
 

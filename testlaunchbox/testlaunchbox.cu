@@ -33,6 +33,7 @@
  ******************************************************************************/
 
 #include "util/sgpucontext.h"
+#include "util/create.h"
 #include "device/launchbox.cuh"
 
 using namespace sgpu;
@@ -97,7 +98,7 @@ void LaunchBar(int count, CudaContext& context) {
 }
 
 int main(int argc, char** argv) {
-	ContextPtr context = CreateCudaDevice(argc, argv, true);
+	ContextPtr context = CreateCudaDeviceFromArgv(argc, argv, true);
 
 	printf("Launching Foo with 1000000 inputs:\n");
 	LaunchFoo(1000000, *context);

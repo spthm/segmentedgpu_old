@@ -32,6 +32,7 @@
  *
  ******************************************************************************/
 
+#include "util/create.h"
 #include "util/format.h"
 #include <vector_types.h>
 #include <cstdarg>
@@ -59,6 +60,47 @@
 #endif
 
 namespace sgpu {
+
+////////////////////////////////////////////////////////////////////////////////
+// Context creation utilities.
+
+ContextPtr CreateCudaDeviceFromArgv(int argc, char** argv, bool printInfo) {
+	int ordinal = 0;
+	if(argc >= 2 && !sscanf(argv[1], "%d", &ordinal)) {
+		fprintf(stderr, "INVALID COMMAND LINE ARGUMENT - NOT A CUDA ORDINAL\n");
+		exit(0);
+	}
+	ContextPtr context = CreateCudaDevice(ordinal);
+	if(!context->PTXVersion()) {
+		fprintf(stderr, "This CUDA executable was not compiled with support"
+			" for device %d (sm_%2d)\n", ordinal, context->ArchVersion() / 10);
+		exit(0);
+	}
+
+	context->SetActive();
+	if(printInfo)
+		printf("%s\n", context->Device().DeviceString().c_str());
+	return context;
+}
+
+ContextPtr CreateCudaDeviceStreamFromArgv(int argc, char** argv, bool printInfo) {
+	int ordinal = 0;
+	if(argc >= 2 && !sscanf(argv[1], "%d", &ordinal)) {
+		fprintf(stderr, "INVALID COMMAND LINE ARGUMENT - NOT A CUDA ORDINAL\n");
+		exit(0);
+	}
+	ContextPtr context = CreateCudaDeviceStream(ordinal);
+	if(!context->PTXVersion()) {
+		fprintf(stderr, "This CUDA executable was not compiled with support"
+			" for device %d (sm_%2d)\n", ordinal, context->ArchVersion() / 10);
+		exit(0);
+	}
+
+	context->SetActive();
+	if(printInfo)
+		printf("%s\n", context->Device().DeviceString().c_str());
+	return context;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // String formatting utilities.

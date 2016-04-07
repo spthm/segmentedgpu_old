@@ -29,6 +29,8 @@
 #include "kernels/scan.cuh"
 #include "kernels/streamscan.cuh"
 #include "kernels/reduce.cuh"
+#include "util/create.h"
+#include "util/format.h"
 
 using namespace sgpu;
 
@@ -167,7 +169,7 @@ const int NumTests = sizeof(Tests) / sizeof(*Tests);
 
 int main(int argc, char** argv) {
 
-	ContextPtr context = CreateCudaDevice(argc, argv, true);
+	ContextPtr context = CreateCudaDeviceFromArgv(argc, argv, true);
 
 	typedef int T1;
 	typedef int64 T2;

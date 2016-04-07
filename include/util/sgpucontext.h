@@ -1,9 +1,9 @@
 #pragma once
 
 #include "util/util.h"
-#include "util/format.h"
 #include "sgpualloc.h"
 #include <cuda.h>
+#include <cuda_runtime_api.h>
 
 namespace sgpu {
 
@@ -253,28 +253,25 @@ typedef sgpu::intrusive_ptr<CudaContext> ContextPtr;
 
 // Create a context on the default stream (0).
 ContextPtr CreateCudaDevice(int ordinal);
-ContextPtr CreateCudaDevice(int argc, char** argv, bool printInfo = false);
 
 // Create a context on a new stream.
 ContextPtr CreateCudaDeviceStream(int ordinal);
-ContextPtr CreateCudaDeviceStream(int argc, char** argv,
-	bool printInfo = false);
 
 // Create a context and attach to an existing stream.
 ContextPtr CreateCudaDeviceAttachStream(cudaStream_t stream);
 ContextPtr CreateCudaDeviceAttachStream(int ordinal, cudaStream_t stream);
 
-struct ContextGroup;
+struct ContextCache;
 
 class CudaContext : public CudaMemSupport {
-	friend struct ContextGroup;
+	friend struct ContextCache;
 
 	friend ContextPtr CreateCudaDevice(int ordinal);
 	friend ContextPtr CreateCudaDeviceStream(int ordinal);
 	friend ContextPtr CreateCudaDeviceAttachStream(int ordinal,
 		cudaStream_t stream);
 public:
-	static CudaContext& StandardContext(int ordinal = -1);
+	static CudaContext& CachedContext(int ordinal = -1);
 
 	// 4KB of page-locked memory per context.
 	int* PageLocked() { return _pageLocked; }
@@ -314,10 +311,8 @@ public:
 		if(!_noRefCount) CudaMemSupport::Release();
 	}
 private:
-	CudaContext(CudaDevice& device, bool newStream, bool standard);
+	CudaContext(CudaDevice& device, bool newStream);
 	~CudaContext();
-
-	AllocPtr CreateDefaultAlloc(CudaDevice& device);
 
 	bool _ownStream;
 	cudaStream_t _stream;
@@ -490,39 +485,6 @@ SGPU_MEM(T) CudaMemSupport::GenFunc(size_t count, Func f) {
 	SGPU_MEM(T) mem = Malloc<T>(count);
 	mem->FromHost(data, count);
 	return mem;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Format methods that operate directly on device mem.
-
-template<typename T, typename Op>
-std::string FormatArrayOp(const CudaDeviceMem<T>& mem, int count, Op op,
-	int numCols) {
-	std::vector<T> host;
-	mem.ToHost(host, count);
-	return FormatArrayOp(host, op, numCols);
-}
-
-template<typename T, typename Op>
-std::string FormatArrayOp(const CudaDeviceMem<T>& mem, Op op, int numCols) {
-	return FormatArrayOp(mem, mem.Size(), op, numCols);
-}
-
-template<typename T>
-void PrintArray(const CudaDeviceMem<T>& mem, int count, const char* format,
-	int numCols) {
-	std::string s = FormatArrayOp(mem, count, FormatOpPrintf(format), numCols);
-	printf("%s", s.c_str());
-}
-
-template<typename T>
-void PrintArray(const CudaDeviceMem<T>& mem, const char* format, int numCols) {
-	PrintArray(mem, mem.Size(), format, numCols);
-}
-template<typename T, typename Op>
-void PrintArrayOp(const CudaDeviceMem<T>& mem, Op op, int numCols) {
-	std::string s = FormatArrayOp(mem, op, numCols);
-	printf("%s", s.c_str());
 }
 
 
