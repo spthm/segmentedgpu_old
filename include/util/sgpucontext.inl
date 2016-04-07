@@ -32,19 +32,19 @@
  *
  ******************************************************************************/
 
-#include "util/sgpucontext.h"
 #include "util/format.h"
+#include <cstring>
 
 namespace sgpu {
 
 ////////////////////////////////////////////////////////////////////////////////
-// CudaTimer
+// CudaTimer method implementations.
 
-void CudaTimer::Start() {
+inline void CudaTimer::Start() {
 	cudaEventRecord(start);
 	cudaDeviceSynchronize();
 }
-double CudaTimer::Split() {
+inline double CudaTimer::Split() {
 	cudaEventRecord(end);
 	cudaDeviceSynchronize();
 	float t;
@@ -52,96 +52,277 @@ double CudaTimer::Split() {
 	start.Swap(end);
 	return (t / 1000.0);
 }
-double CudaTimer::Throughput(int count, int numIterations) {
+inline double CudaTimer::Throughput(int count, int numIterations) {
 	double elapsed = Split();
 	return (double)numIterations * count / elapsed;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// CudaDeviceMem method implementations
+
+template<typename T>
+cudaError_t CudaDeviceMem<T>::ToDevice(T* data, size_t count) const {
+	return ToDevice(0, sizeof(T) * count, data);
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::ToDevice(size_t srcOffset, size_t bytes,
+	void* data) const {
+	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes,
+		cudaMemcpyDeviceToDevice);
+	if(cudaSuccess != error) {
+		printf("CudaDeviceMem::ToDevice copy error %d\n", error);
+		exit(0);
+	}
+	return error;
+}
+
+template<typename T>
+cudaError_t CudaDeviceMem<T>::ToHost(T* data, size_t count) const {
+	return ToHost(0, sizeof(T) * count, data);
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::ToHost(std::vector<T>& data, size_t count) const {
+	data.resize(count);
+	cudaError_t error = cudaSuccess;
+	if(_size) error = ToHost(&data[0], count);
+	return error;
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::ToHost(std::vector<T>& data) const {
+	return ToHost(data, _size);
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::ToHost(size_t srcOffset, size_t bytes,
+	void* data) const {
+
+	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes,
+		cudaMemcpyDeviceToHost);
+	if(cudaSuccess != error) {
+		printf("CudaDeviceMem::ToHost copy error %d\n", error);
+		exit(0);
+	}
+	return error;
+}
+
+template<typename T>
+cudaError_t CudaDeviceMem<T>::FromDevice(const T* data, size_t count) {
+	return FromDevice(0, sizeof(T) * count, data);
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::FromDevice(size_t dstOffset, size_t bytes,
+	const void* data) {
+	if(dstOffset + bytes > sizeof(T) * _size)
+		return cudaErrorInvalidValue;
+	cudaMemcpy(_p + dstOffset, data, bytes, cudaMemcpyDeviceToDevice);
+	return cudaSuccess;
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::FromHost(const std::vector<T>& data,
+	size_t count) {
+	cudaError_t error = cudaSuccess;
+	if(data.size()) error = FromHost(&data[0], count);
+	return error;
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::FromHost(const std::vector<T>& data) {
+	return FromHost(data, data.size());
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::FromHost(const T* data, size_t count) {
+	return FromHost(0, sizeof(T) * count, data);
+}
+template<typename T>
+cudaError_t CudaDeviceMem<T>::FromHost(size_t dstOffset, size_t bytes,
+	const void* data) {
+	if(dstOffset + bytes > sizeof(T) * _size)
+		return cudaErrorInvalidValue;
+	cudaMemcpy(_p + dstOffset, data, bytes, cudaMemcpyHostToDevice);
+	return cudaSuccess;
+}
+template<typename T>
+CudaDeviceMem<T>::~CudaDeviceMem() {
+	_alloc->Free(_p);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// CudaMemSupport method implementations
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::Malloc(size_t count) {
+	SGPU_MEM(T) mem(new CudaDeviceMem<T>(_alloc.get()));
+	mem->_size = count;
+	cudaError_t error = _alloc->Malloc(sizeof(T) * count, (void**)&mem->_p);
+	if(cudaSuccess != error) {
+		printf("cudaMalloc error %d\n", error);
+		exit(0);
+		throw CudaException(cudaErrorMemoryAllocation);
+	}
+#ifdef DEBUG
+	// Initialize the memory to -1 in debug mode.
+//	cudaMemset(mem->get(), -1, count);
+#endif
+
+	return mem;
+}
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::Malloc(const T* data, size_t count) {
+	SGPU_MEM(T) mem = Malloc<T>(count);
+	mem->FromHost(data, count);
+	return mem;
+}
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::Malloc(const std::vector<T>& data) {
+	SGPU_MEM(T) mem = Malloc<T>(data.size());
+	if(data.size()) mem->FromHost(&data[0], data.size());
+	return mem;
+}
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::Fill(size_t count, T fill) {
+	std::vector<T> data(count, fill);
+	return Malloc(data);
+}
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::FillAscending(size_t count, T first, T step) {
+	std::vector<T> data(count);
+	for(size_t i = 0; i < count; ++i)
+		data[i] = first + i * step;
+	return Malloc(data);
+}
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::GenRandom(size_t count, T min, T max) {
+	std::vector<T> data(count);
+	for(size_t i = 0; i < count; ++i)
+		data[i] = Rand(min, max);
+	return Malloc(data);
+}
+
+template<typename T>
+SGPU_MEM(T) CudaMemSupport::SortRandom(size_t count, T min, T max) {
+	std::vector<T> data(count);
+	for(size_t i = 0; i < count; ++i)
+		data[i] = Rand(min, max);
+	std::sort(data.begin(), data.end());
+	return Malloc(data);
+}
+
+template<typename T, typename Func>
+SGPU_MEM(T) CudaMemSupport::GenFunc(size_t count, Func f) {
+	std::vector<T> data(count);
+	for(size_t i = 0; i < count; ++i)
+		data[i] = f(i);
+
+	SGPU_MEM(T) mem = Malloc<T>(count);
+	mem->FromHost(data, count);
+	return mem;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // CudaDevice
 
-__global__ void KernelVersionShim() { }
-
-struct DeviceGroup {
+struct DeviceCache {
 	int numCudaDevices;
 	CudaDevice** cudaDevices;
 
-	DeviceGroup() {
-		numCudaDevices = -1;
-		cudaDevices = 0;
-	}
-
-	int GetDeviceCount() {
-		if(-1 == numCudaDevices) {
-			cudaError_t error = cudaGetDeviceCount(&numCudaDevices);
-			if(cudaSuccess != error || numCudaDevices <= 0) {
-				fprintf(stderr, "ERROR ENUMERATING CUDA DEVICES.\nExiting.\n");
-				exit(0);
-			}
-			cudaDevices = new CudaDevice*[numCudaDevices];
-			memset(cudaDevices, 0, sizeof(CudaDevice*) * numCudaDevices);
-		}
-		return numCudaDevices;
-	}
-
-	CudaDevice* GetByOrdinal(int ordinal) {
-		if(ordinal >= GetDeviceCount()) return 0;
-
-		if(!cudaDevices[ordinal]) {
-			// Retrieve the device properties.
-			CudaDevice* device = cudaDevices[ordinal] = new CudaDevice;
-			device->_ordinal = ordinal;
-			cudaError_t error = cudaGetDeviceProperties(&device->_prop,
-				ordinal);
-			if(cudaSuccess != error) {
-				fprintf(stderr, "FAILURE TO CREATE CUDA DEVICE %d\n", ordinal);
-				exit(0);
-			}
-
-			// Get the compiler version for this device.
-			cudaSetDevice(ordinal);
-			cudaFuncAttributes attr;
-			error = cudaFuncGetAttributes(&attr, KernelVersionShim);
-			if(cudaSuccess == error)
-				device->_ptxVersion = 10 * attr.ptxVersion;
-			else {
-				printf("NOT COMPILED WITH COMPATIBLE PTX VERSION FOR DEVICE"
-					" %d\n", ordinal);
-				// The module wasn't compiled with support for this device.
-				device->_ptxVersion = 0;
-			}
-		}
-		return cudaDevices[ordinal];
-	}
-
-	~DeviceGroup() {
-		if(cudaDevices) {
-			for(int i = 0; i < numCudaDevices; ++i)
-				delete cudaDevices[i];
-			delete [] cudaDevices;
-		}
-		cudaDeviceReset();
-	}
+	DeviceCache();
+	int GetDeviceCount();
+	CudaDevice* GetByOrdinal(int ordinal);
+	~DeviceCache();
 };
 
-std::auto_ptr<DeviceGroup> deviceGroup;
-
-
-int CudaDevice::DeviceCount() {
-	if(!deviceGroup.get())
-		deviceGroup.reset(new DeviceGroup);
-	return deviceGroup->GetDeviceCount();
+inline DeviceCache::DeviceCache() {
+	numCudaDevices = -1;
+	cudaDevices = 0;
 }
 
-CudaDevice& CudaDevice::ByOrdinal(int ordinal) {
+inline int DeviceCache::GetDeviceCount() {
+	if(-1 == numCudaDevices) {
+		cudaError_t error = cudaGetDeviceCount(&numCudaDevices);
+		if(cudaSuccess != error || numCudaDevices <= 0) {
+			fprintf(stderr, "ERROR ENUMERATING CUDA DEVICES.\nExiting.\n");
+			exit(0);
+		}
+		cudaDevices = new CudaDevice*[numCudaDevices];
+		memset(cudaDevices, 0, sizeof(CudaDevice*) * numCudaDevices);
+	}
+	return numCudaDevices;
+}
+
+inline DeviceCache::~DeviceCache() {
+	if(cudaDevices) {
+		for(int i = 0; i < numCudaDevices; ++i)
+			delete cudaDevices[i];
+		delete [] cudaDevices;
+	}
+	cudaDeviceReset();
+}
+
+// The GetByOrdinal() implementation requires a __global__ kernel, and thus can
+// only be complied from .cu files. Host files should never include the
+// implementation. We thus assume that at least one .cu file / translation unit
+// will contain '#include "sgpucontext.h"'. This must indeed be the case, as
+// all segmented gpu functions require an sgpu::CudaContext.
+#ifdef __CUDACC__
+
+// Must be template to avoid multiple definition error.
+// (Cannot inline a __global__).
+template<int dummy>
+__global__ void KernelVersionShim() { }
+
+inline CudaDevice* DeviceCache::GetByOrdinal(int ordinal) {
+	if(ordinal >= GetDeviceCount()) return 0;
+
+	if(!cudaDevices[ordinal]) {
+		// Retrieve the device properties.
+		CudaDevice* device = cudaDevices[ordinal] = new CudaDevice;
+		device->_ordinal = ordinal;
+		cudaError_t error = cudaGetDeviceProperties(&device->_prop,
+			ordinal);
+		if(cudaSuccess != error) {
+			fprintf(stderr, "FAILURE TO CREATE CUDA DEVICE %d\n", ordinal);
+			exit(0);
+		}
+
+		// Get the compiler version for this device.
+		cudaSetDevice(ordinal);
+		cudaFuncAttributes attr;
+		error = cudaFuncGetAttributes(&attr, KernelVersionShim<0>);
+		if(cudaSuccess == error)
+			device->_ptxVersion = 10 * attr.ptxVersion;
+		else {
+			printf("NOT COMPILED WITH COMPATIBLE PTX VERSION FOR DEVICE"
+				" %d\n", ordinal);
+			// The module wasn't compiled with support for this device.
+			device->_ptxVersion = 0;
+		}
+	}
+	return cudaDevices[ordinal];
+}
+
+#endif
+
+std::auto_ptr<DeviceCache> deviceCache;
+
+
+inline int CudaDevice::DeviceCount() {
+	if(!deviceCache.get())
+		deviceCache.reset(new DeviceCache);
+	return deviceCache->GetDeviceCount();
+}
+
+inline CudaDevice& CudaDevice::ByOrdinal(int ordinal) {
 	if(ordinal < 0 || ordinal >= DeviceCount()) {
 		fprintf(stderr, "CODE REQUESTED INVALID CUDA DEVICE %d\n", ordinal);
 		exit(0);
 	}
-	return *deviceGroup->GetByOrdinal(ordinal);
+	return *deviceCache->GetByOrdinal(ordinal);
 }
 
-CudaDevice& CudaDevice::Selected() {
+inline CudaDevice& CudaDevice::Selected() {
 	int ordinal;
 	cudaError_t error = cudaGetDevice(&ordinal);
 	if(cudaSuccess != error) {
@@ -151,7 +332,7 @@ CudaDevice& CudaDevice::Selected() {
 	return ByOrdinal(ordinal);
 }
 
-void CudaDevice::SetActive() {
+inline void CudaDevice::SetActive() {
 	cudaError_t error = cudaSetDevice(_ordinal);
 	if(cudaSuccess != error) {
 		fprintf(stderr, "ERROR SETTING CUDA DEVICE TO ORDINAL %d\n", _ordinal);
@@ -159,7 +340,7 @@ void CudaDevice::SetActive() {
 	}
 }
 
-std::string CudaDevice::DeviceString() const {
+inline std::string CudaDevice::DeviceString() const {
 	size_t freeMem, totalMem;
 	cudaError_t error = cudaMemGetInfo(&freeMem, &totalMem);
 	if(cudaSuccess != error) {
@@ -183,6 +364,23 @@ std::string CudaDevice::DeviceString() const {
 		_prop.memoryClockRate / 1000.0, _prop.memoryBusWidth, memBandwidth,
 		_prop.ECCEnabled ? "Enabled" : "Disabled");
 	return s;
+}
+
+template<typename T>
+int CudaDevice::MaxActiveBlocks(T kernel, int blockSize,
+	size_t dynamicSMemSize) const {
+	int maxBlocksPerSM;
+
+#if CUDA_VERSION < 6050
+	// Play it safe-ish. Though in reality the true value may be zero!
+	maxBlocksPerSM = 1;
+
+#else
+	cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxBlocksPerSM, kernel,
+		blockSize, dynamicSMemSize);
+#endif
+
+	return maxBlocksPerSM * NumSMs();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -216,7 +414,7 @@ struct ContextCache {
 };
 std::auto_ptr<ContextCache> contextCache;
 
-CudaContext::CudaContext(CudaDevice& device, bool newStream) :
+inline CudaContext::CudaContext(CudaDevice& device, bool newStream) :
 	_event(cudaEventDisableTiming /*| cudaEventBlockingSync */),
 	_stream(0), _noRefCount(false), _pageLocked(0) {
 
@@ -233,7 +431,7 @@ CudaContext::CudaContext(CudaDevice& device, bool newStream) :
 	error = cudaStreamCreate(&_auxStream);
 }
 
-CudaContext::~CudaContext() {
+inline CudaContext::~CudaContext() {
 	if(_pageLocked)
 		cudaFreeHost(_pageLocked);
 	if(_ownStream && _stream)
@@ -242,7 +440,7 @@ CudaContext::~CudaContext() {
 		cudaStreamDestroy(_auxStream);
 }
 
-CudaContext& CudaContext::CachedContext(int ordinal) {
+inline CudaContext& CudaContext::CachedContext(int ordinal) {
 	bool setActive = -1 != ordinal;
 	if(-1 == ordinal) {
 		cudaError_t error = cudaGetDevice(&ordinal);
@@ -269,24 +467,24 @@ CudaContext& CudaContext::CachedContext(int ordinal) {
 	return context;
 }
 
-ContextPtr CreateCudaDevice(int ordinal) {
+inline ContextPtr CreateCudaDevice(int ordinal) {
 	CudaDevice& device = CudaDevice::ByOrdinal(ordinal);
 	ContextPtr context(new CudaContext(device, false));
 	return context;
 }
 
-ContextPtr CreateCudaDeviceStream(int ordinal) {
+inline ContextPtr CreateCudaDeviceStream(int ordinal) {
 	ContextPtr context(new CudaContext(CudaDevice::ByOrdinal(ordinal), true));
 	return context;
 }
 
-ContextPtr CreateCudaDeviceAttachStream(int ordinal, cudaStream_t stream) {
+inline ContextPtr CreateCudaDeviceAttachStream(int ordinal, cudaStream_t stream) {
 	ContextPtr context(new CudaContext(CudaDevice::ByOrdinal(ordinal), false));
 	context->_stream = stream;
 	return context;
 }
 
-ContextPtr CreateCudaDeviceAttachStream(cudaStream_t stream) {
+inline ContextPtr CreateCudaDeviceAttachStream(cudaStream_t stream) {
 	int ordinal;
 	cudaGetDevice(&ordinal);
 	return CreateCudaDeviceAttachStream(ordinal, stream);
@@ -295,7 +493,7 @@ ContextPtr CreateCudaDeviceAttachStream(cudaStream_t stream) {
 ////////////////////////////////////////////////////////////////////////////////
 // CudaAllocSimple
 
-cudaError_t CudaAllocSimple::Malloc(size_t size, void** p) {
+inline cudaError_t CudaAllocSimple::Malloc(size_t size, void** p) {
 	cudaError_t error = cudaSuccess;
 	*p = 0;
 	if(size) error = cudaMalloc(p, size);
@@ -308,7 +506,7 @@ cudaError_t CudaAllocSimple::Malloc(size_t size, void** p) {
 	return error;
 }
 
-bool CudaAllocSimple::Free(void* p) {
+inline bool CudaAllocSimple::Free(void* p) {
 	cudaError_t error = cudaSuccess;
 	if(p) error = cudaFree(p);
 	return cudaSuccess == error;

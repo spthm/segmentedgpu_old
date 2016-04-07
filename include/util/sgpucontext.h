@@ -102,10 +102,10 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////
 
-struct DeviceGroup;
+struct DeviceCache;
 
 class CudaDevice : public noncopyable {
-	friend struct DeviceGroup;
+	friend struct DeviceCache;
 public:
 	static int DeviceCount();
 	static CudaDevice& ByOrdinal(int ordinal);
@@ -121,17 +121,7 @@ public:
 	int PTXVersion() const { return _ptxVersion; }
 
 	template<typename T>
-	int MaxActiveBlocks(T kernel, int blockSize, size_t dynamicSMemSize = 0) const {
-		int maxBlocksPerSM;
-#if CUDA_VERSION < 6050
-		maxBlocksPerSM = 1;
-#else
-		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxBlocksPerSM, kernel,
-			blockSize, dynamicSMemSize);
-#endif
-
-		return maxBlocksPerSM * NumSMs();
-	}
+	int MaxActiveBlocks(T kernel, int blockSize, size_t dynamicSMemSize = 0) const;
 
 	std::string DeviceString() const;
 
@@ -323,172 +313,10 @@ private:
 	int* _pageLocked;
 };
 
-////////////////////////////////////////////////////////////////////////////////
-// CudaDeviceMem method implementations
-
-template<typename T>
-cudaError_t CudaDeviceMem<T>::ToDevice(T* data, size_t count) const {
-	return ToDevice(0, sizeof(T) * count, data);
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::ToDevice(size_t srcOffset, size_t bytes,
-	void* data) const {
-	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes,
-		cudaMemcpyDeviceToDevice);
-	if(cudaSuccess != error) {
-		printf("CudaDeviceMem::ToDevice copy error %d\n", error);
-		exit(0);
-	}
-	return error;
-}
-
-template<typename T>
-cudaError_t CudaDeviceMem<T>::ToHost(T* data, size_t count) const {
-	return ToHost(0, sizeof(T) * count, data);
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::ToHost(std::vector<T>& data, size_t count) const {
-	data.resize(count);
-	cudaError_t error = cudaSuccess;
-	if(_size) error = ToHost(&data[0], count);
-	return error;
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::ToHost(std::vector<T>& data) const {
-	return ToHost(data, _size);
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::ToHost(size_t srcOffset, size_t bytes,
-	void* data) const {
-
-	cudaError_t error = cudaMemcpy(data, (char*)_p + srcOffset, bytes,
-		cudaMemcpyDeviceToHost);
-	if(cudaSuccess != error) {
-		printf("CudaDeviceMem::ToHost copy error %d\n", error);
-		exit(0);
-	}
-	return error;
-}
-
-template<typename T>
-cudaError_t CudaDeviceMem<T>::FromDevice(const T* data, size_t count) {
-	return FromDevice(0, sizeof(T) * count, data);
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::FromDevice(size_t dstOffset, size_t bytes,
-	const void* data) {
-	if(dstOffset + bytes > sizeof(T) * _size)
-		return cudaErrorInvalidValue;
-	cudaMemcpy(_p + dstOffset, data, bytes, cudaMemcpyDeviceToDevice);
-	return cudaSuccess;
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::FromHost(const std::vector<T>& data,
-	size_t count) {
-	cudaError_t error = cudaSuccess;
-	if(data.size()) error = FromHost(&data[0], count);
-	return error;
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::FromHost(const std::vector<T>& data) {
-	return FromHost(data, data.size());
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::FromHost(const T* data, size_t count) {
-	return FromHost(0, sizeof(T) * count, data);
-}
-template<typename T>
-cudaError_t CudaDeviceMem<T>::FromHost(size_t dstOffset, size_t bytes,
-	const void* data) {
-	if(dstOffset + bytes > sizeof(T) * _size)
-		return cudaErrorInvalidValue;
-	cudaMemcpy(_p + dstOffset, data, bytes, cudaMemcpyHostToDevice);
-	return cudaSuccess;
-}
-template<typename T>
-CudaDeviceMem<T>::~CudaDeviceMem() {
-	_alloc->Free(_p);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// CudaMemSupport method implementations
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::Malloc(size_t count) {
-	SGPU_MEM(T) mem(new CudaDeviceMem<T>(_alloc.get()));
-	mem->_size = count;
-	cudaError_t error = _alloc->Malloc(sizeof(T) * count, (void**)&mem->_p);
-	if(cudaSuccess != error) {
-		printf("cudaMalloc error %d\n", error);
-		exit(0);
-		throw CudaException(cudaErrorMemoryAllocation);
-	}
-#ifdef DEBUG
-	// Initialize the memory to -1 in debug mode.
-//	cudaMemset(mem->get(), -1, count);
-#endif
-
-	return mem;
-}
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::Malloc(const T* data, size_t count) {
-	SGPU_MEM(T) mem = Malloc<T>(count);
-	mem->FromHost(data, count);
-	return mem;
-}
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::Malloc(const std::vector<T>& data) {
-	SGPU_MEM(T) mem = Malloc<T>(data.size());
-	if(data.size()) mem->FromHost(&data[0], data.size());
-	return mem;
-}
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::Fill(size_t count, T fill) {
-	std::vector<T> data(count, fill);
-	return Malloc(data);
-}
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::FillAscending(size_t count, T first, T step) {
-	std::vector<T> data(count);
-	for(size_t i = 0; i < count; ++i)
-		data[i] = first + i * step;
-	return Malloc(data);
-}
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::GenRandom(size_t count, T min, T max) {
-	std::vector<T> data(count);
-	for(size_t i = 0; i < count; ++i)
-		data[i] = Rand(min, max);
-	return Malloc(data);
-}
-
-template<typename T>
-SGPU_MEM(T) CudaMemSupport::SortRandom(size_t count, T min, T max) {
-	std::vector<T> data(count);
-	for(size_t i = 0; i < count; ++i)
-		data[i] = Rand(min, max);
-	std::sort(data.begin(), data.end());
-	return Malloc(data);
-}
-
-template<typename T, typename Func>
-SGPU_MEM(T) CudaMemSupport::GenFunc(size_t count, Func f) {
-	std::vector<T> data(count);
-	for(size_t i = 0; i < count; ++i)
-		data[i] = f(i);
-
-	SGPU_MEM(T) mem = Malloc<T>(count);
-	mem->FromHost(data, count);
-	return mem;
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 
 
 } // namespace sgpu
+
+#include "sgpucontext.inl"
